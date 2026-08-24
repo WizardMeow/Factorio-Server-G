@@ -1,6 +1,6 @@
-import { constants } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { profileMetadataSchema, profileStateSchema } from './persistence-schemas.js';
 
 export interface ProfileSummary { id: string; name: string }
 export interface ProfileContext extends ProfileSummary { configRoot: string; runtimeRoot: string }
@@ -11,10 +11,11 @@ export class ProfileService {
   async initialize() {
     const defaultConfig = join(this.projectRoot, 'config', 'profiles', 'default');
     await mkdir(defaultConfig, { recursive: true });
-    await Promise.all(['factorio.json', 'mods.json', 'mods.lock.json'].map(async name => {
-      try { await copyFile(join(this.projectRoot, 'config', name), join(defaultConfig, name), constants.COPYFILE_EXCL); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    }));
+    await Promise.all([
+      writeIfMissing(join(defaultConfig, 'factorio.json'), { version: '2.0.77', channel: 'stable' }),
+      writeIfMissing(join(defaultConfig, 'mods.json'), { factorioVersion: '2.0', mods: [] }),
+      writeIfMissing(join(defaultConfig, 'mods.lock.json'), { factorioVersion: '2.0', generatedAt: null, mods: [] }),
+    ]);
     await writeIfMissing(join(defaultConfig, 'profile.json'), { name: 'Default' });
   }
 
@@ -23,25 +24,25 @@ export class ProfileService {
     const root = join(this.projectRoot, 'config', 'profiles');
     const entries = await readdir(root, { withFileTypes: true });
     return Promise.all(entries.filter(entry => entry.isDirectory()).map(async entry => {
-      const metadata = await readJson<{ name?: string }>(join(root, entry.name, 'profile.json')).catch((): { name?: string } => ({}));
+      const metadata = await readJson(join(root, entry.name, 'profile.json'), profileMetadataSchema).catch(() => profileMetadataSchema.parse({}));
       return { id: entry.name, name: metadata.name || entry.name };
     })).then(items => items.sort((left, right) => left.id === 'default' ? -1 : right.id === 'default' ? 1 : left.name.localeCompare(right.name)));
   }
 
   async activeId() {
-    const value = await readJson<{ activeId?: string }>(join(this.projectRoot, 'runtime', 'webui', 'profile.json')).catch((): { activeId?: string } => ({}));
+    const value = await readJson(join(this.projectRoot, 'runtime', 'webui', 'profile.json'), profileStateSchema).catch(() => profileStateSchema.parse({}));
     const profiles = await this.list();
     return profiles.some(profile => profile.id === value.activeId) ? value.activeId! : 'default';
   }
 
   async context(id?: string): Promise<ProfileContext> {
-    id ??= await this.activeId();
-    const profile = (await this.list()).find(item => item.id === id);
-    if (!profile) throw new Error(`Unknown profile: ${id}`);
+    const profileId = id ?? await this.activeId();
+    const profile = (await this.list()).find(item => item.id === profileId);
+    if (!profile) throw new Error(`Unknown profile: ${profileId}`);
     return {
       ...profile,
-      configRoot: join(this.projectRoot, 'config', 'profiles', id),
-      runtimeRoot: id === 'default' ? join(this.projectRoot, 'runtime') : join(this.projectRoot, 'runtime', 'profiles', id),
+      configRoot: join(this.projectRoot, 'config', 'profiles', profileId),
+      runtimeRoot: profileId === 'default' ? join(this.projectRoot, 'runtime') : join(this.projectRoot, 'runtime', 'profiles', profileId),
     };
   }
 
@@ -52,9 +53,13 @@ export class ProfileService {
     for (let suffix = 2; existing.has(id); suffix++) id = `${base}-${suffix}`;
     const source = await this.context();
     const target = join(this.projectRoot, 'config', 'profiles', id);
-    await mkdir(target, { recursive: true });
-    await Promise.all(['factorio.json', 'mods.json', 'mods.lock.json'].map(file => copyFile(join(source.configRoot, file), join(target, file))));
-    await writeFile(join(target, 'profile.json'), `${JSON.stringify({ name: name.trim() }, null, 2)}\n`);
+    const staging = `${target}.creating`;
+    await mkdir(staging, { recursive: true });
+    try {
+      await Promise.all(['factorio.json', 'mods.json', 'mods.lock.json'].map(file => copyFile(join(source.configRoot, file), join(staging, file))));
+      await writeFile(join(staging, 'profile.json'), `${JSON.stringify({ name: name.trim() }, null, 2)}\n`);
+      await rename(staging, target);
+    } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
     return { id, name: name.trim() };
   }
 
@@ -66,7 +71,7 @@ export class ProfileService {
   }
 }
 
-async function readJson<T>(path: string): Promise<T> { return JSON.parse(await readFile(path, 'utf8')) as T; }
+async function readJson<T>(path: string, schema: { parse(value: unknown): T }): Promise<T> { return schema.parse(JSON.parse(await readFile(path, 'utf8'))); }
 async function writeIfMissing(path: string, value: unknown) {
   try { await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }

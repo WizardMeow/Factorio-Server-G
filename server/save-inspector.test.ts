@@ -20,3 +20,12 @@ test('reads exact Factorio and mod versions from a 2.x save header', () => {
     mods: [{ name: 'base', version: '2.0.77' }, { name: 'pycoalprocessing', version: '3.1.9' }],
   });
 });
+
+test('parses a real Factorio 2.0 Space Age save header sample', () => {
+  const sample = Buffer.from('AgAAAAgAAQAAAAhmcmVlcGxheQRiYXNlAQAAAAAAAAECAAg4NgEAAQAAoAALBGJhc2UCAAgXuiyeD2JlbHQtdmlzdWFsaXplcgIAAWA+ywIOZWxldmF0ZWQtcmFpbHMCAAiUg8FwDEZpbHRlckhlbHBlcgACA11IW3IEZmxpYgAPADeJOYUHcXVhbGl0eQIACJh0dt0FeWFmbGEAAQZi3vqHDkJvdHRsZW5lY2tMaXRlAQMADB6bEQ5mYWN0b3J5cGxhbm5lcgIAAa/UGKIPU21hcnRfSW5zZXJ0ZXJzAgAE70g1eQlzcGFjZS1hZ2UCAAiG6O3atljMuQUAGAAAAAAKYm5sLWVuYWJsZQUAAQAAAAAFdmFsdWUBAAEACGJubC1nbG93BQABAAAAAAV2YWx1ZQEAAQAZYm5sLWluY2x1ZGUtbWluaW5nLWRyaWxscwUAAQAAAAAFdmFsdWUBAAEAEmJubC1pbmRpY2F0b3Itc2l6ZQUAAQAAAAAFdmFsdWUFAAAFc21hbGwAEmJubC1jb2xvci1kaXNhYmxlZAUAAQAAAAAFdmFsdWUFAAQAAAAAAXICAAAAAAAAAPA/AAFnAgAAAAAAAAAAAAABYgIAAAAAAAAAAAAAAWECAAAAAAAAAPA/ABVibmwtY29sb3ItZnVsbF9vdXRwdXQFAAE=', 'base64');
+  const result = inspectLevelInit(sample);
+  expect(result.factorioVersion).toBe('2.0.8');
+  expect(result.mods).toHaveLength(11);
+  expect(result.mods).toContainEqual({ name: 'space-age', version: '2.0.8' });
+  expect(result.mods).toContainEqual({ name: 'factoryplanner', version: '2.0.1' });
+});

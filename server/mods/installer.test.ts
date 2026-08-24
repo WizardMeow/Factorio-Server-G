@@ -20,6 +20,7 @@ describe('ModInstaller', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     const result = await installer.applyPending();
     expect(await readFile(join(root, 'runtime/factorio/mods/demo_1.0.0.zip'), 'utf8')).toBe('archive');
+    expect(await installer.installedMods()).toEqual([{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }]);
     expect(JSON.parse(await readFile(join(root, 'config/mods.lock.json'), 'utf8')).mods[0]).toMatchObject({ name: 'demo', version: '1.0.0', explicit: true });
     expect(result?.previous).not.toBeNull();
     expect(await readFile(join(result!.previous!, 'old.zip'), 'utf8')).toBe('old');

@@ -28,6 +28,6 @@ export interface ComposeAdapter {
   recreate(): Promise<void>;
   recentLogs(lines: number): Promise<string[]>;
   followLogs(onLine: (line: string) => void, signal: AbortSignal): Promise<void>;
-  recentManagementLogs?(): string[];
+  recentManagementLogs?(): Promise<string[]>;
   onManagementLog?(listener: (line: string) => void): () => void;
 }

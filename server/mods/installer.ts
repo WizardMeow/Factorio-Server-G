@@ -12,6 +12,12 @@ const pendingPlanSchema = z.object({
   selections: z.array(z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), release: portalReleaseSchema })),
   optional: z.array(z.object({ from: z.string(), dependency: z.object({ kind: z.enum(['required', 'optional', 'hidden-optional', 'incompatible']), name: z.string(), operator: z.string().optional(), version: z.string().optional(), raw: z.string() }) })),
 });
+const trackedConfigSchema = z.object({ factorioVersion: z.string(), mods: z.array(z.object({ name: z.string(), version: z.string().optional(), enabled: z.boolean().optional() })) });
+const trackedLockSchema = z.object({
+  factorioVersion: z.string(),
+  mods: z.array(z.object({ name: z.string(), version: z.string(), sha1: z.string(), fileName: z.string(), downloadUrl: z.string(), enabled: z.boolean().optional(), explicit: z.boolean() })),
+});
+const generationSchema = z.object({ id: z.string(), planId: z.string(), createdAt: z.string(), mods: z.array(z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), enabled: z.boolean() })).default([]), plan: pendingPlanSchema.optional() });
 
 export class ModInstaller {
   constructor(private readonly configRoot: string, private readonly runtimeRoot: string, private readonly username?: string, private readonly token?: string, private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}) {}
@@ -23,10 +29,34 @@ export class ModInstaller {
     this.log({ planId: plan.id, modCount: plan.selections.length }, 'mod plan staged for next server start');
   }
 
+  async stageFromCurrentConfig() {
+    const config = trackedConfigSchema.parse(JSON.parse(await readFile(join(this.configRoot, 'mods.json'), 'utf8')));
+    const lock = trackedLockSchema.parse(JSON.parse(await readFile(join(this.configRoot, 'mods.lock.json'), 'utf8')));
+    const plan: ModPlan = {
+      id: randomUUID(), factorioVersion: config.factorioVersion, createdAt: new Date().toISOString(), optional: [],
+      roots: config.mods.map(mod => ({ ...mod, enabled: mod.enabled ?? true })),
+      selections: lock.mods.filter(mod => mod.enabled ?? true).map(mod => ({
+        name: mod.name, version: mod.version, explicit: mod.explicit,
+        release: { download_url: mod.downloadUrl, file_name: mod.fileName, released_at: '', version: mod.version, sha1: mod.sha1, info_json: { factorio_version: lock.factorioVersion } },
+      })),
+    };
+    await atomicJson(join(this.configRoot, 'mods.pending.json'), plan);
+    this.log({ planId: plan.id, modCount: plan.selections.length }, 'existing mod lock staged for isolated profile start');
+  }
+
+  async installedMods() {
+    try {
+      const generation = generationSchema.parse(JSON.parse(await readFile(join(this.runtimeRoot, 'factorio', 'mods', '.generation.json'), 'utf8')));
+      return generation.mods;
+    } catch { return []; }
+  }
+
+  async hasPending() { try { await readFile(join(this.configRoot, 'mods.pending.json')); return true; } catch { return false; } }
+
   async applyPending() {
     const path = join(this.configRoot, 'mods.pending.json');
     let plan: ModPlan;
-    try { plan = pendingPlanSchema.parse(JSON.parse(await readFile(path, 'utf8'))) as ModPlan; }
+    try { plan = pendingPlanSchema.parse(JSON.parse(await readFile(path, 'utf8'))); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
@@ -62,7 +92,7 @@ export class ModInstaller {
         await writeFile(join(staged, selection.release.file_name), bytes);
       }
       await writeFile(join(staged, 'mod-list.json'), `${JSON.stringify({ mods: [{ name: 'base', enabled: true }, ...plan.selections.map(item => ({ name: item.name, enabled: true }))] }, null, 2)}\n`);
-      await writeFile(join(staged, '.generation.json'), `${JSON.stringify({ id: generationId, planId: plan.id, createdAt: new Date().toISOString() }, null, 2)}\n`);
+      await writeFile(join(staged, '.generation.json'), `${JSON.stringify({ id: generationId, planId: plan.id, createdAt: new Date().toISOString(), mods: plan.selections.map(item => ({ name: item.name, version: item.version, explicit: item.explicit, enabled: true })), plan }, null, 2)}\n`);
       await mkdir(join(this.runtimeRoot, 'factorio'), { recursive: true });
       previous = join(generations, `${generationId}.previous`);
       if (await exists(activeMods)) await rename(activeMods, previous);
@@ -79,10 +109,14 @@ export class ModInstaller {
   }
 
   async rollback(previousPath: string) {
+    const generation = generationSchema.parse(JSON.parse(await readFile(join(previousPath, '.generation.json'), 'utf8')));
+    if (!generation.plan) throw new Error('Previous mod generation does not contain a restorable lock');
     const active = join(this.runtimeRoot, 'factorio', 'mods');
     const failed = join(this.runtimeRoot, 'webui', 'mod-generations', `failed-${Date.now()}`);
     if (await exists(active)) await rename(active, failed);
     await rename(previousPath, active);
+    await this.writeTrackedConfig(generation.plan);
+    await rm(join(this.configRoot, 'mods.pending.json'), { force: true });
     this.log({ previousPath, failedPath: failed }, 'mod generation rolled back');
   }
 
@@ -90,7 +124,11 @@ export class ModInstaller {
     const generations = join(this.runtimeRoot, 'webui', 'mod-generations');
     try {
       const names = (await readdir(generations)).filter(name => name.endsWith('.previous')).sort().reverse();
-      return names[0] ? join(generations, names[0]) : null;
+      for (const name of names) {
+        const path = join(generations, name);
+        try { if (generationSchema.parse(JSON.parse(await readFile(join(path, '.generation.json'), 'utf8'))).plan) return path; } catch { /* Ignore legacy/incomplete generations. */ }
+      }
+      return null;
     } catch { return null; }
   }
 

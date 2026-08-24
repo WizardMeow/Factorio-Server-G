@@ -29,6 +29,15 @@ describe('core HTTP flows', () => {
     expect(adapter.calls).toEqual([]);
   });
 
+  test('stages an exact version and compatible mod plan without downloading', async () => {
+    const { app, adapter, root } = await fixture();
+    const response = await app.inject({ method: 'PUT', url: '/api/config/version', payload: { version: '2.0.76' } });
+    expect(response.statusCode).toBe(200);
+    expect(adapter.calls).toEqual([]);
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/factorio.json'), 'utf8'))).toEqual({ version: '2.0.76' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/mods.pending.json'), 'utf8'))).toMatchObject({ factorioVersion: '2.0', selections: [] });
+  });
+
   test('backs up an individual autosave and restores prior running state', async () => {
     const { app, adapter, root } = await fixture();
     adapter.state = { status: 'ready', running: true };
@@ -44,7 +53,7 @@ describe('core HTTP flows', () => {
     await writeFile(join(root, 'config/profiles/default/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
     await writeFile(join(root, 'config/profiles/default/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
     const overview = await app.inject({ method: 'GET', url: '/api/overview' });
-    expect(overview.json().mods).toMatchObject({ roots: [{ name: 'demo', enabled: true }], installed: [{ name: 'demo', version: '1.0.0' }] });
+    expect(overview.json().mods).toMatchObject({ roots: [{ name: 'demo', enabled: true }], resolved: [{ name: 'demo', version: '1.0.0' }], installed: [], pending: false });
 
     const update = await app.inject({ method: 'POST', url: '/api/mods/change-plan', payload: { action: 'update', name: 'demo', version: '1.0.0' } });
     expect(update.statusCode).toBe(200);
@@ -81,6 +90,17 @@ describe('core HTTP flows', () => {
     expect(adapter.calls).toEqual([]);
     expect(JSON.parse(await readFile(join(root, 'config/profiles/default/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77' });
     expect(JSON.parse(await readFile(join(root, 'runtime/webui/launch.json'), 'utf8'))).toEqual({ kind: 'imports', name: 'world.zip', saveName: '_webui-selected.zip' });
+  });
+
+  test('creates an isolated profile with its own staged mods and saves', async () => {
+    const { app, root } = await fixture();
+    const response = await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Py Hard' } });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({ id: 'py-hard', name: 'Py Hard' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/py-hard/factorio.json'), 'utf8'))).toMatchObject({ version: '2.0.77' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/py-hard/mods.pending.json'), 'utf8'))).toMatchObject({ selections: [] });
+    expect((await app.inject({ method: 'POST', url: '/api/profiles/activate', payload: { id: 'py-hard' } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/overview' })).json().profiles.activeId).toBe('py-hard');
   });
 });
 

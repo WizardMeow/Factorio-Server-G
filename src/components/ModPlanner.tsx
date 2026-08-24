@@ -1,8 +1,8 @@
-import { Box, Download, Pencil, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Box, ClipboardCheck, Pencil, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import type { ModPlan, Overview } from '../api';
-import { request } from '../api';
+import { modPlanSchema, request } from '../api';
 import { PanelHeader } from './PanelHeader';
 
 interface Props { mods: Overview['mods']; busy: boolean; running: boolean; onApply(planId: string): void }
@@ -29,23 +29,24 @@ export function ModPlanner({ mods, busy, running, onApply }: Props) {
 
   const add = (): PendingChange => ({
     label: `Add ${input}`, allowOptional: true,
-    run: optional => request<ModPlan>('/api/mods/plan', { method: 'POST', body: JSON.stringify({ input, version: version || undefined, optional }) }),
+    run: optional => request<ModPlan>('/api/mods/plan', { method: 'POST', body: JSON.stringify({ input, version: version || undefined, optional }) }, modPlanSchema),
   });
   const change = (label: string, body: unknown): PendingChange => ({
     label, allowOptional: false,
-    run: () => request<ModPlan>('/api/mods/change-plan', { method: 'POST', body: JSON.stringify(body) }),
+    run: () => request<ModPlan>('/api/mods/change-plan', { method: 'POST', body: JSON.stringify(body) }, modPlanSchema),
   });
 
-  return <section className="panel mods">
+  return <section className="panel mt-4 overflow-hidden">
     <PanelHeader eyebrow="MOD PORTAL" title="Mod Management"><Box size={18} /></PanelHeader>
-    <div className="mod-builder">
+    <div className="px-[19px] pt-[18px] pb-[22px]">
       <CurrentMods mods={mods} versions={versions} disabled={disabled} onVersion={(name, value) => setVersions(current => ({ ...current, [name]: value }))} onChange={next => void resolveChange(next)} makeChange={change} />
-      <div className="mod-inputs">
-        <label>Mod name or official URL<input value={input} onChange={event => { setInput(event.target.value); setPlan(null); }} placeholder="https://mods.factorio.com/mod/ParallelBeltBuilder" /></label>
-        <label>Root release<input value={version} onChange={event => { setVersion(event.target.value); setPlan(null); }} placeholder="latest compatible" /></label>
+      {mods.pending && <p className="mt-[-7px] mb-3.5 rounded-[7px] border border-[#4c3b22] bg-[#22190f] px-[11px] py-[9px] text-[10px] text-[#e5ad72]">Mod 目标配置已锁定，将在下次启动时下载并应用。</p>}
+      <div className="grid grid-cols-[minmax(240px,1fr)_180px_auto] items-end gap-[9px] max-[850px]:grid-cols-1">
+        <label className="text-[10px] text-[#737d77]">Mod name or official URL<input className="mt-[7px] block h-[38px] w-full rounded-[7px] border border-[#303633] bg-[#0b0e0d] px-[11px] text-[#d6dcd8]" value={input} onChange={event => { setInput(event.target.value); setPlan(null); }} placeholder="https://mods.factorio.com/mod/ParallelBeltBuilder" /></label>
+        <label className="text-[10px] text-[#737d77]">Root release<input className="mt-[7px] block h-[38px] w-full rounded-[7px] border border-[#303633] bg-[#0b0e0d] px-[11px] text-[#d6dcd8]" value={version} onChange={event => { setVersion(event.target.value); setPlan(null); }} placeholder="latest compatible" /></label>
         <button className="primary" disabled={disabled || !input} onClick={() => void resolveChange(add())}>{planning ? <RefreshCw className="spinner" size={15} /> : <Search size={15} />}Add & resolve</button>
       </div>
-      {running && <p className="warning">Stop Factorio before planning and applying mod changes.</p>}
+      {running && <p className="mt-3 mb-0 text-[10px] text-[#fbbf24]">Stop Factorio before planning and applying mod changes.</p>}
       {plan && pending && <PlanPreview plan={plan} label={pending.label} busy={busy} running={running} selectedOptional={selectedOptional} onApply={onApply} onOptionalChange={pending.allowOptional ? next => void resolveChange(pending, next) : undefined} />}
     </div>
   </section>;
@@ -57,31 +58,31 @@ function CurrentMods({ mods, versions, disabled, onVersion, onChange, makeChange
   makeChange(label: string, body: unknown): PendingChange;
 }) {
   const installed = new Map(mods.installed.map(mod => [mod.name, mod]));
-  return <div className="current-mods">
-    <div className="current-mods-head"><div><b>Configured roots</b><span>{mods.roots.length} declared · {mods.installed.length} resolved archives</span></div></div>
-    {mods.roots.length ? <div className="mod-root-list">{mods.roots.map(mod => {
+  return <div className="mx-[-19px] mt-[-18px] mb-[18px] border-b border-[#252a27]">
+    <div className="flex min-h-[58px] items-center justify-between px-[18px] py-[13px]"><div><b className="block text-xs">Configured roots</b><span className="font-mono text-[9px] text-[#65706a]">{mods.roots.length} declared · {mods.resolved.length} resolved · {mods.installed.length} installed</span></div></div>
+    {mods.roots.length ? <div className="border-t border-[#202522]">{mods.roots.map(mod => {
       const resolved = installed.get(mod.name);
       const requested = versions[mod.name] ?? mod.version ?? '';
-      return <div className={`mod-root ${mod.enabled ? '' : 'disabled'}`} key={mod.name}>
-        <div className="mod-identity"><Power size={14} /><span><b>{mod.name}</b><small>{resolved ? `installed ${resolved.version}` : mod.enabled ? 'not installed' : 'disabled'}</small></span></div>
-        <input aria-label={`${mod.name} 目标版本`} value={requested} onChange={event => onVersion(mod.name, event.target.value)} placeholder="latest" disabled={disabled} />
-        <button aria-label={`更新 ${mod.name}`} title="Resolve selected version" disabled={disabled || requested === (mod.version ?? '')} onClick={() => onChange(makeChange(`Update ${mod.name}`, { action: 'update', name: mod.name, version: requested || undefined }))}><Pencil size={14} /></button>
-        <button aria-label={`${mod.enabled ? '禁用' : '启用'} ${mod.name}`} title={mod.enabled ? 'Disable' : 'Enable'} disabled={disabled} onClick={() => onChange(makeChange(`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`, { action: 'set-enabled', name: mod.name, enabled: !mod.enabled }))}><Power size={14} /></button>
-        <button className="danger-icon" aria-label={`删除 ${mod.name}`} title="Remove" disabled={disabled} onClick={() => onChange(makeChange(`Remove ${mod.name}`, { action: 'remove', name: mod.name }))}><Trash2 size={14} /></button>
+      return <div className={`grid min-h-14 grid-cols-[minmax(180px,1fr)_150px_34px_34px_34px] items-center gap-[7px] border-b border-[#1e2320] py-2 pr-3 pl-[18px] max-[850px]:grid-cols-[1fr_34px_34px_34px] ${mod.enabled ? '' : 'opacity-55'}`} key={mod.name}>
+        <div className="flex min-w-0 items-center gap-[9px] text-[var(--green)]"><Power size={14} /><span className="grid min-w-0 gap-0.5"><b className="overflow-hidden font-mono text-[11px] text-ellipsis">{mod.name}</b><small className="font-mono text-[9px] text-[#65706a]">{resolved ? `installed ${resolved.version}` : mod.enabled ? 'not installed' : 'disabled'}</small></span></div>
+        <input className="h-[34px] min-w-0 rounded-md border border-[#303633] bg-[#0b0e0d] px-[9px] font-mono text-[10px] text-[#cbd2ce] max-[850px]:col-span-full max-[850px]:col-start-1 max-[850px]:row-start-2" aria-label={`${mod.name} 目标版本`} value={requested} onChange={event => onVersion(mod.name, event.target.value)} placeholder="latest" disabled={disabled} />
+        <button className="size-[34px] p-0" aria-label={`更新 ${mod.name}`} title="Resolve selected version" disabled={disabled || requested === (mod.version ?? '')} onClick={() => onChange(makeChange(`Update ${mod.name}`, { action: 'update', name: mod.name, version: requested || undefined }))}><Pencil size={14} /></button>
+        <button className="size-[34px] p-0" aria-label={`${mod.enabled ? '禁用' : '启用'} ${mod.name}`} title={mod.enabled ? 'Disable' : 'Enable'} disabled={disabled} onClick={() => onChange(makeChange(`${mod.enabled ? 'Disable' : 'Enable'} ${mod.name}`, { action: 'set-enabled', name: mod.name, enabled: !mod.enabled }))}><Power size={14} /></button>
+        <button className="size-[34px] p-0 text-[#fb7185]" aria-label={`删除 ${mod.name}`} title="Remove" disabled={disabled} onClick={() => onChange(makeChange(`Remove ${mod.name}`, { action: 'remove', name: mod.name }))}><Trash2 size={14} /></button>
       </div>;
-    })}</div> : <div className="empty-mods">No configured mods. Add a Mod Portal URL or name below.</div>}
-    {mods.installed.some(mod => !mod.explicit) && <div className="dependency-summary"><b>Managed dependencies</b><span>{mods.installed.filter(mod => !mod.explicit).map(mod => `${mod.name}@${mod.version}`).join(' · ')}</span></div>}
+    })}</div> : <div className="p-[18px] font-mono text-[10px] text-[#626c66]">No configured mods. Add a Mod Portal URL or name below.</div>}
+    {mods.resolved.some(mod => !mod.explicit) && <div className="grid gap-1 bg-[#0d100f] px-[18px] pt-[11px] pb-3.5"><b className="text-[9px] tracking-[.1em] text-[#8b958f] uppercase">Resolved dependencies</b><span className="font-mono text-[9px] leading-[1.6] text-[#626c66]">{mods.resolved.filter(mod => !mod.explicit).map(mod => `${mod.name}@${mod.version}`).join(' · ')}</span></div>}
   </div>;
 }
 
 function PlanPreview({ plan, label, busy, running, selectedOptional, onApply, onOptionalChange }: { plan: ModPlan; label: string; busy: boolean; running: boolean; selectedOptional: string[]; onApply(id: string): void; onOptionalChange?(value: string[]): void }) {
-  return <div className="plan">
-    <div className="plan-head"><div><b>{label}</b><span>{plan.roots.filter(root => root.enabled).length} roots · {plan.selections.length} archives · Factorio {plan.factorioVersion}</span></div><button className="primary" disabled={busy || running} onClick={() => onApply(plan.id)}><Download size={15} />Confirm & apply</button></div>
-    <div className="resolved">{plan.selections.map(item => <div key={item.name}><span className={item.explicit ? 'root-mod' : ''}>{item.name}</span><b>{item.version}</b><em>{item.explicit ? 'root' : 'dependency'}</em></div>)}</div>
-    {plan.selections.length === 0 && <div className="empty-mods">This change will leave no external mods installed.</div>}
-    {plan.optional.length > 0 && <div className="optional"><h4>Optional dependencies</h4>{plan.optional.map(item => <label key={`${item.from}-${item.dependency.raw}`}>
+  return <div className="mt-[17px] overflow-hidden rounded-[9px] border border-[#2d332f] bg-[#0b0e0d]">
+    <div className="flex min-h-[68px] items-center justify-between border-b border-[#252a27] px-3.5 py-3"><div><b className="block text-[13px]">{label}</b><span className="font-mono text-[9px] text-[#64706a]">{plan.roots.filter(root => root.enabled).length} roots · {plan.selections.length} archives · Factorio {plan.factorioVersion}</span></div><button className="primary" disabled={busy || running} onClick={() => onApply(plan.id)}><ClipboardCheck size={15} />Stage for next start</button></div>
+    <div className="grid grid-cols-3 p-2 max-[850px]:grid-cols-2 max-[560px]:grid-cols-1">{plan.selections.map(item => <div className="grid grid-cols-[1fr_auto] gap-x-2.5 gap-y-[3px] border-b border-[#1c211f] p-[9px]" key={item.name}><span className={`font-mono text-[10px] ${item.explicit ? 'text-[var(--orange)]' : ''}`}>{item.name}</span><b className="font-mono text-[10px]">{item.version}</b><em className="col-span-full font-mono text-[8px] text-[#535c57] uppercase">{item.explicit ? 'root' : 'dependency'}</em></div>)}</div>
+    {plan.selections.length === 0 && <div className="p-[18px] font-mono text-[10px] text-[#626c66]">This change will leave no external mods installed.</div>}
+    {plan.optional.length > 0 && <div className="border-t border-[#252a27] px-4 pt-3 pb-[15px]"><h4 className="mt-0 mb-[9px] text-[10px] text-[#858f89]">Optional dependencies</h4>{plan.optional.map(item => <label className="flex items-center gap-[7px] text-[11px]" key={`${item.from}-${item.dependency.raw}`}>
       {onOptionalChange && <input type="checkbox" checked={selectedOptional.includes(item.dependency.name)} onChange={event => onOptionalChange(event.target.checked ? [...selectedOptional, item.dependency.name] : selectedOptional.filter(name => name !== item.dependency.name))} />}
-      <span>{item.dependency.name}</span><small>requested by {item.from}{onOptionalChange ? ' · select explicitly' : ''}</small>
+      <span>{item.dependency.name}</span><small className="text-[#59625d]">requested by {item.from}{onOptionalChange ? ' · select explicitly' : ''}</small>
     </label>)}</div>}
   </div>;
 }

@@ -9,13 +9,8 @@ button.primary { background:var(--orange); color:#16110d; border-color:#ff9f58; 
 button.ghost { padding:0 7px; border:0; background:transparent; }
 button.icon { width:36px; padding:0; }
 button.square { width:38px; padding:0; flex:none; }
-button.wide { width:100%; margin-top:12px; }
 .panel { background:linear-gradient(145deg,#141817f2,#101312f5); border:1px solid var(--line); border-radius:12px; box-shadow:0 20px 60px #0000002e; }
-.panel-head { height:66px; padding:0 19px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #242a27; }
-.panel-head h3 { margin:3px 0 0; font-size:15px; }
-.panel-head>svg { color:#66706a; }
 .eyebrow { display:block; color:#69736d; font:700 9px ui-monospace,monospace; letter-spacing:.2em; }
-.empty { padding:13px 4px; color:#555e59; font-size:11px; }
-.hint { margin:10px 17px 0; color:#68716c; font-size:10px; line-height:1.5; }
 .spinner { animation:spin 1.2s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
+@keyframes progress { 50% { width:80%; } }

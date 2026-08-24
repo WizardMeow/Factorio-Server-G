@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
 import type { ComposeAdapter } from './types.js';
@@ -18,7 +18,9 @@ import { normalizeModName } from './mods/versions.js';
 import type { ConfiguredMod, ModPlan } from './mods/types.js';
 import { inspectFactorioSave } from './save-inspector.js';
 import { fetchFactorioVersions } from './factorio-versions.js';
-import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, profileActivateBodySchema, profileCreateBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveImportResultSchema, saveNextLaunchBodySchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
+import { ProfileDataStore } from './profile-data-store.js';
+import { ServerOperations } from './server-operations.js';
+import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, profileActivateBodySchema, profileCreateBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveImportResultSchema, saveNextLaunchBodySchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
 
 interface AppOptions { projectRoot: string; adapter: ComposeAdapter; serveFrontend?: boolean; modProvider?: ModMetadataProvider }
 const BUILT_IN_MODS = new Set(['base', 'core', 'elevated-rails', 'quality', 'space-age']);
@@ -40,8 +42,9 @@ export async function buildApp(options: AppOptions) {
     const saves = new SaveService(profile.runtimeRoot);
     await Promise.all([saves.initialize(), ensureDefaultServerSettings(options.projectRoot, profile.runtimeRoot)]);
     const installer = new ModInstaller(profile.configRoot, profile.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: profile.id, ...fields }, message));
-    return { profile, saves, installer };
+    return { profile, saves, installer, data: new ProfileDataStore(profile.configRoot, profile.runtimeRoot) };
   }
+  const serverOperations = new ServerOperations(options.adapter, operations, activeServices);
 
   app.setErrorHandler((error, request, reply) => {
     const conflict = error instanceof OperationConflictError;
@@ -50,18 +53,24 @@ export async function buildApp(options: AppOptions) {
   });
 
   app.get('/api/overview', async request => {
-    const { profile, saves, installer } = await activeServices();
-    const [modConfig, modLock] = await Promise.all([readModConfig(profile.configRoot), readModLock(profile.configRoot)]);
+    const { profile, saves, installer, data } = await activeServices();
+    const [modConfig, modLock] = await Promise.all([data.readModConfig(), data.readModLock()]);
     const saveList = await saves.list();
-    const launch = await readNextLaunch(profile.runtimeRoot);
+    const launch = await data.readNextLaunch();
     const selectedSave = saveList[launch.kind].find(entry => entry.name === launch.name) ?? null;
     return {
       server: await options.adapter.inspect(), operations: operations.snapshot,
-      saves: { ...saveList, main: selectedSave, nextLaunch: { kind: launch.kind, name: launch.name } }, config: await readConfig(profile.configRoot),
-      mods: { roots: normalizeConfiguredMods(modConfig.mods), installed: modLock.mods.map(mod => ({ name: mod.name, version: mod.version, explicit: mod.explicit, enabled: mod.enabled ?? true })) },
+      saves: { autosaves: saveList.autosaves, imports: saveList.imports, backups: saveList.backups, selected: selectedSave, nextLaunch: { kind: launch.kind, name: launch.name } }, config: await data.readFactorioConfig(),
+      mods: {
+        roots: normalizeConfiguredMods(modConfig.mods),
+        resolved: modLock.mods.map(mod => ({ name: mod.name, version: mod.version, explicit: mod.explicit, enabled: mod.enabled ?? true })),
+        installed: await installer.installedMods(), pending: await installer.hasPending(),
+      },
       profiles: { activeId: profile.id, items: await profiles.list() },
-      connection: { address: `${request.hostname}:${process.env.FACTORIO_PORT || '34197'}` },
-      settings: await readSettings(profile.runtimeRoot), modRollbackAvailable: Boolean(await installer.findRollbackCandidate()),
+      connection: process.env.FACTORIO_ADDRESS
+        ? { address: `${process.env.FACTORIO_ADDRESS}:${process.env.FACTORIO_PORT || '34197'}`, configured: true }
+        : { address: null, configured: false },
+      settings: await data.readSettings(), modRollbackAvailable: Boolean(await installer.findRollbackCandidate()),
     };
   });
   app.get('/api/operations', async () => operations.snapshot);
@@ -71,9 +80,13 @@ export async function buildApp(options: AppOptions) {
     const parsed = profileCreateBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Profile name is required' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
-    const profile = await profiles.create(parsed.data.name);
-    const context = await profiles.context(profile.id);
-    await Promise.all([new SaveService(context.runtimeRoot).initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot)]);
+    const profile = await operations.runExclusive('create-profile', 'recreating', async () => {
+      const created = await profiles.create(parsed.data.name);
+      const context = await profiles.context(created.id);
+      const profileInstaller = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created.id, ...fields }, message));
+      await Promise.all([new SaveService(context.runtimeRoot).initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot), profileInstaller.stageFromCurrentConfig()]);
+      return created;
+    });
     request.log.info({ profileId: profile.id }, 'profile created');
     return reply.code(201).send(profile);
   });
@@ -83,23 +96,24 @@ export async function buildApp(options: AppOptions) {
     if (!parsed.success) return reply.code(400).send({ error: 'Profile id is required' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before switching profiles' });
-    await profiles.activate(parsed.data.id);
-    await activeServices();
+    await operations.runExclusive('activate-profile', 'recreating', async () => { await profiles.activate(parsed.data.id); await activeServices(); });
     request.log.info({ profileId: parsed.data.id }, 'profile activated');
     return reply.send({ id: parsed.data.id });
   });
 
-  app.post<{ Body: { input?: string; version?: string; optional?: string[] } }>('/api/mods/plan', async (request, reply) => {
+  app.post('/api/mods/plan', async (request, reply) => {
     const parsed = modPlanBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'input is required' });
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before planning mods' });
     const input = parsed.data.input;
-    const { profile } = await activeServices();
-    const config = await readModConfig(profile.configRoot);
+    const { profile, data } = await activeServices();
+    const config = await data.readModConfig();
     const root = { name: normalizeModName(input), version: parsed.data.version || undefined };
     const existing = normalizeConfiguredMods(config.mods).filter(item => item.name !== root.name);
     const optional = (parsed.data.optional ?? []).map(name => ({ name: normalizeModName(name) }));
     const nextRoots: ConfiguredMod[] = [...existing, { ...root, enabled: true }];
-    const plan = await resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots, optional);
+    const plan = await operations.runExclusive('plan-mods', 'recreating', () => resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots, optional));
     plans.set(plan.id, { profileId: profile.id, plan });
     request.log.info({ planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod plan resolved');
     return reply.send(plan);
@@ -108,8 +122,10 @@ export async function buildApp(options: AppOptions) {
   app.post('/api/mods/change-plan', async (request, reply) => {
     const parsed = modChangePlanBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid mod change' });
-    const { profile } = await activeServices();
-    const config = await readModConfig(profile.configRoot);
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before planning mods' });
+    const { profile, data } = await activeServices();
+    const config = await data.readModConfig();
     const roots = normalizeConfiguredMods(config.mods);
     const name = normalizeModName(parsed.data.name);
     const existing = roots.find(root => root.name === name);
@@ -123,13 +139,13 @@ export async function buildApp(options: AppOptions) {
       const enabled = parsed.data.enabled;
       nextRoots = roots.map(root => root.name === name ? { ...root, enabled } : root);
     }
-    const plan = await resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots);
+    const plan = await operations.runExclusive('plan-mod-change', 'recreating', () => resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots));
     plans.set(plan.id, { profileId: profile.id, plan });
     request.log.info({ planId: plan.id, action: parsed.data.action, modName: name, resolvedCount: plan.selections.length }, 'mod change plan resolved');
     return reply.send(plan);
   });
 
-  app.post<{ Body: { planId?: string } }>('/api/mods/apply', async (request, reply) => {
+  app.post('/api/mods/apply', async (request, reply) => {
     const parsed = modApplyBodySchema.safeParse(request.body);
     const planned = parsed.success ? plans.get(parsed.data.planId) : undefined;
     const { profile, installer } = await activeServices();
@@ -137,8 +153,7 @@ export async function buildApp(options: AppOptions) {
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     const plan = planned.plan;
     if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before installing mods' });
-    await installer.stage(plan);
-    plans.delete(plan.id);
+    await operations.runExclusive('stage-mods', 'recreating', async () => { await installer.stage(plan); plans.delete(plan.id); });
     request.log.info({ profileId: profile.id, planId: plan.id }, 'mod plan saved for next start');
     return reply.send({ staged: true, planId: plan.id });
   });
@@ -149,73 +164,71 @@ export async function buildApp(options: AppOptions) {
     if (!rollbackPath) return reply.code(409).send({ error: 'No previous mod generation is available' });
     if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before rolling back mods' });
     const previous = rollbackPath;
-    const operation = await operations.run('rollback-mods', 'recreating', async setStage => {
-      await installer.rollback(previous);
-      await setStage('starting');
-      await options.adapter.start();
-      await waitUntilRunning(options.adapter, setStage);
-    });
+    const operation = await serverOperations.rollbackMods(previous);
     return reply.code(202).send(operation);
   });
 
-  app.post<{ Params: { action: string } }>('/api/server/:action', async (request, reply) => {
+  app.post('/api/server/:action', async (request, reply) => {
     const parsed = serverActionParamsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(404).send({ error: 'Unknown action' });
     const action = parsed.data.action;
-    const stage = action === 'stop' ? 'stopping' : 'pulling';
-    const operation = await operations.run(action, stage, async setStage => {
-      if (action === 'stop') await options.adapter.stop();
-      if (action !== 'stop') {
-        if (action === 'restart' && (await options.adapter.inspect()).running) { await setStage('stopping'); await options.adapter.stop(); }
-        const { installer } = await activeServices();
-        await setStage('pulling');
-        await options.adapter.pull();
-        await installer.applyPending();
-        await setStage('recreating');
-        await options.adapter.recreate();
-        await setStage('starting');
-        await waitUntilRunning(options.adapter, setStage);
-      }
-    });
+    const operation = await serverOperations.lifecycle(action);
     return reply.code(202).send(operation);
   });
 
-  app.put<{ Body: { version?: string } }>('/api/config/version', async (request, reply) => {
+  app.put('/api/config/version', async (request, reply) => {
     const parsed = versionBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid Factorio version' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     const version = parsed.data.version;
     const current = await options.adapter.inspect();
     if (current.running) return reply.code(409).send({ error: 'Factorio must be stopped before changing version' });
-    const { profile } = await activeServices();
+    const { profile, installer, data } = await activeServices();
     const configPath = join(profile.configRoot, 'factorio.json');
-    await writeJsonAtomic(configPath, { version, channel: parsed.data.channel });
+    await operations.runExclusive('stage-version', 'recreating', async () => {
+      const modConfig = await data.readModConfig();
+      const plan = await resolveConfiguredPlan(resolver, version, normalizeConfiguredMods(modConfig.mods));
+      await data.withFileRollback([configPath, join(profile.configRoot, 'mods.json'), join(profile.configRoot, 'mods.lock.json'), join(profile.configRoot, 'mods.pending.json')], async () => {
+        await installer.stage(plan); await data.writeFactorioConfig({ version, channel: parsed.data.channel });
+      });
+    });
     request.log.info({ profileId: profile.id, factorioVersion: version, channel: parsed.data.channel }, 'Factorio version staged for next start');
     return reply.send({ version, channel: parsed.data.channel });
   });
 
   app.post('/api/saves/import', async (request, reply) => {
-    const { profile, saves, installer } = await activeServices();
+    const { profile, saves, installer, data } = await activeServices();
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before importing a startup save' });
     const file = await request.file();
     if (!file || !file.filename.endsWith('.zip')) return reply.code(400).send({ error: 'A .zip save is required' });
     const safeName = basename(file.filename);
     const temp = join(saves.importsDir, `${safeName}.uploading`);
-    await pipeline(file.file, createWriteStream(temp));
     const destination = join(saves.importsDir, safeName);
-    await rename(temp, destination);
     try {
-      const inspection = await inspectFactorioSave(destination);
-      const roots = inspection.mods.filter(mod => !BUILT_IN_MODS.has(mod.name)).map(mod => ({ ...mod, enabled: true }));
-      const plan = await resolveConfiguredPlan(resolver, inspection.factorioVersion, roots);
-      await installer.stage(plan);
-      await writeJsonAtomic(join(profile.configRoot, 'factorio.json'), { version: inspection.factorioVersion });
-      const saveName = await saves.materialize('imports', safeName);
-      await writeNextLaunch(profile.runtimeRoot, { kind: 'imports', name: safeName, saveName });
-      request.log.info({ profileId: profile.id, saveName: safeName, factorioVersion: inspection.factorioVersion, modCount: roots.length, planId: plan.id }, 'save imported and startup configuration staged');
-      return reply.code(201).send(saveImportResultSchema.parse({ name: safeName, factorioVersion: inspection.factorioVersion, mods: roots.map(({ name, version }) => ({ name, version: version! })), warning: inspection.warning }));
+      const result = await operations.runExclusive('import-save', 'recreating', async () => {
+        await pipeline(file.file, createWriteStream(temp));
+        const inspection = await inspectFactorioSave(temp);
+        const roots = inspection.mods.filter(mod => !BUILT_IN_MODS.has(mod.name)).map(mod => ({ ...mod, enabled: true }));
+        const plan = await resolveConfiguredPlan(resolver, inspection.factorioVersion, roots);
+        const trackedPaths = [
+          destination,
+          join(profile.configRoot, 'factorio.json'), join(profile.configRoot, 'mods.json'), join(profile.configRoot, 'mods.lock.json'), join(profile.configRoot, 'mods.pending.json'),
+          join(profile.runtimeRoot, 'factorio', 'saves', '_webui-selected.zip'), join(profile.runtimeRoot, 'webui', 'launch.json'),
+        ];
+        return data.withFileRollback(trackedPaths, async () => {
+          await rename(temp, destination);
+          await installer.stage(plan);
+          await data.writeFactorioConfig({ version: inspection.factorioVersion });
+          const materialized = await saves.materialize('imports', safeName);
+          await data.writeNextLaunch({ kind: 'imports', name: safeName, saveName: materialized });
+          return { inspection, roots, plan, materialized };
+        });
+      });
+      request.log.info({ profileId: profile.id, saveName: safeName, runtimeSaveName: result.materialized, factorioVersion: result.inspection.factorioVersion, modCount: result.roots.length, planId: result.plan.id }, 'save imported and startup configuration staged');
+      return reply.code(201).send(saveImportResultSchema.parse({ name: safeName, factorioVersion: result.inspection.factorioVersion, mods: result.roots.map(({ name, version }) => ({ name, version: version! })), warning: result.inspection.warning }));
     } catch (error) {
+      await rm(temp, { force: true });
       request.log.error({ saveName: safeName, error: redact(error) }, 'save import configuration failed');
       throw error;
     }
@@ -224,14 +237,7 @@ export async function buildApp(options: AppOptions) {
   app.post('/api/saves/backup-entry', async (request, reply) => {
     const parsed = saveBackupBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'A save candidate is required' });
-    const { saves } = await activeServices();
-    const before = await options.adapter.inspect();
-    const operation = await operations.run('backup', 'backing-up', async setStage => {
-      if (before.running && parsed.data.kind === 'autosaves') { await setStage('stopping'); await options.adapter.stop(); }
-      await setStage('backing-up');
-      await saves.backupEntry(parsed.data.kind, parsed.data.name);
-      if (before.running && parsed.data.kind === 'autosaves') { await setStage('starting'); await options.adapter.start(); await waitUntilRunning(options.adapter, setStage); }
-    });
+    const operation = await serverOperations.backup(parsed.data.kind, parsed.data.name);
     return reply.code(202).send(operation);
   });
 
@@ -239,32 +245,41 @@ export async function buildApp(options: AppOptions) {
     const parsed = saveDeleteBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'An import or backup candidate is required' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
-    const { profile, saves } = await activeServices();
-    const launch = await readNextLaunch(profile.runtimeRoot);
-    if (launch.kind === parsed.data.kind && launch.name === parsed.data.name) return reply.code(409).send({ error: 'Cannot delete the selected startup save' });
-    await saves.deleteEntry(parsed.data.kind, parsed.data.name);
+    const { saves, data } = await activeServices();
+    await operations.runExclusive('delete-save', 'recreating', async () => {
+      const launch = await data.readNextLaunch();
+      if (launch.kind === parsed.data.kind && launch.name === parsed.data.name) throw new OperationConflictError('Cannot delete the selected startup save');
+      await saves.deleteEntry(parsed.data.kind, parsed.data.name);
+    });
     request.log.info({ saveKind: parsed.data.kind, saveName: parsed.data.name }, 'save candidate deleted');
     return reply.code(204).send();
   });
 
   app.post('/api/saves/next-launch', async (request, reply) => {
-    const { profile, saves } = await activeServices();
+    const { saves, data } = await activeServices();
     const parsed = saveNextLaunchBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'A .zip save name is required' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before selecting a startup save' });
-    const available = (await saves.list())[parsed.data.kind];
-    if (!available.some(entry => entry.name === parsed.data.name)) return reply.code(404).send({ error: 'Save does not exist in the Factorio saves directory' });
-    const saveName = await saves.materialize(parsed.data.kind, parsed.data.name);
-    await writeNextLaunch(profile.runtimeRoot, { kind: parsed.data.kind, name: parsed.data.name, saveName });
+    if (!(await saves.list())[parsed.data.kind].some(entry => entry.name === parsed.data.name)) return reply.code(404).send({ error: 'Save does not exist in the Factorio saves directory' });
+    const saveName = await operations.runExclusive('select-save', 'recreating', async () => {
+      if ((await options.adapter.inspect()).running) throw new OperationConflictError('Factorio must be stopped before selecting a startup save');
+      const available = (await saves.list())[parsed.data.kind];
+      if (!available.some(entry => entry.name === parsed.data.name)) throw new Error('Save does not exist in the Factorio saves directory');
+      const materialized = await saves.materialize(parsed.data.kind, parsed.data.name);
+      await data.writeNextLaunch({ kind: parsed.data.kind, name: parsed.data.name, saveName: materialized });
+      return materialized;
+    });
     request.log.info({ saveKind: parsed.data.kind, saveName: parsed.data.name, runtimeSaveName: saveName }, 'next launch save selected');
     return reply.send({ kind: parsed.data.kind, name: parsed.data.name });
   });
 
-  app.get<{ Params: { name: string } }>('/api/saves/backups/:name', async (request, reply) => {
+  app.get('/api/saves/backups/:name', async (request, reply) => {
     const { saves } = await activeServices();
-    const name = basename(request.params.name);
-    if (name !== request.params.name || !name.endsWith('.zip')) return reply.code(400).send({ error: 'Invalid save name' });
+    const parsed = saveDownloadParamsSchema.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid save name' });
+    const name = basename(parsed.data.name);
+    if (name !== parsed.data.name) return reply.code(400).send({ error: 'Invalid save name' });
     return reply.type('application/zip').header('content-disposition', `attachment; filename="${name}"`).send(createReadStream(join(saves.backupsDir, name)));
   });
 
@@ -278,14 +293,20 @@ export async function buildApp(options: AppOptions) {
     operations.on('change', onOperation);
     send('connected', { connectedAt: new Date().toISOString() });
     const recentLogs = await options.adapter.recentLogs(500).catch(() => []);
-    for (const line of options.adapter.recentManagementLogs?.() ?? []) send('log', { source: 'container', line });
-    for (const line of recentLogs) send('log', classifyContainerLog(redact(line)));
+    for (const line of await options.adapter.recentManagementLogs?.() ?? []) send('log', { source: 'container', line });
+    for (const line of recentLogs) {
+      const entry = classifyContainerLog(redact(line));
+      if (entry.source === 'game') send('log', entry);
+    }
     send('history-complete', { count: recentLogs.length });
     const controller = new AbortController();
     const stopManagementLogs = options.adapter.onManagementLog?.(line => send('log', { source: 'container', line }));
     const heartbeat = setInterval(() => { if (!closed) reply.raw.write(': keepalive\n\n'); }, 15_000);
     request.log.info('log event stream connected');
-    void options.adapter.followLogs(line => send('log', classifyContainerLog(redact(line))), controller.signal).catch(error => send('error', { error: redact(error) }));
+    void options.adapter.followLogs(line => {
+      const entry = classifyContainerLog(redact(line));
+      if (entry.source === 'game') send('log', entry);
+    }, controller.signal).catch(error => send('error', { error: redact(error) }));
     request.raw.once('close', () => {
       closed = true;
       clearInterval(heartbeat);
@@ -302,43 +323,6 @@ export async function buildApp(options: AppOptions) {
   }
   return app;
 }
-
-async function waitUntilRunning(adapter: ComposeAdapter, setStage: (stage: 'ready' | 'failed') => Promise<void>) {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    const state = await adapter.inspect();
-    if (state.status === 'ready') { await setStage('ready'); return; }
-    if (attempt >= 2 && !state.running) throw new Error('Factorio container exited during startup; inspect its logs for details');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  throw new Error('Factorio did not become ready before timeout');
-}
-
-async function readConfig(root: string) {
-  return JSON.parse(await readFile(join(root, 'factorio.json'), 'utf8')) as { version: string; channel?: 'latest' | 'stable' };
-}
-async function readModConfig(root: string) {
-  return JSON.parse(await readFile(join(root, 'mods.json'), 'utf8')) as { factorioVersion: string; mods: Array<{ name: string; version?: string; enabled?: boolean }> };
-}
-async function readModLock(root: string) {
-  try { return JSON.parse(await readFile(join(root, 'mods.lock.json'), 'utf8')) as { mods: Array<{ name: string; version: string; explicit: boolean; enabled?: boolean }> }; }
-  catch { return { mods: [] }; }
-}
-async function readSettings(runtimeRoot: string) {
-  try {
-    const value = JSON.parse(await readFile(join(runtimeRoot, 'factorio', 'config', 'server-settings.json'), 'utf8')) as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !/password|token|credential/i.test(key)));
-  } catch { return null; }
-}
-async function writeJsonAtomic(path: string, value: unknown) { await mkdir(resolve(path, '..'), { recursive: true }); const temp = `${path}.tmp`; await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`); await rename(temp, path); }
-
-interface LaunchSave { kind: 'autosaves' | 'imports' | 'backups'; name: string; saveName: string }
-async function readNextLaunch(runtimeRoot: string): Promise<LaunchSave> {
-  try {
-    const value = JSON.parse(await readFile(join(runtimeRoot, 'webui', 'launch.json'), 'utf8')) as Partial<LaunchSave>;
-    return value.kind && value.name && value.saveName ? value as LaunchSave : { kind: 'autosaves', name: '_autosave1.zip', saveName: '_autosave1.zip' };
-  } catch { return { kind: 'autosaves', name: '_autosave1.zip', saveName: '_autosave1.zip' }; }
-}
-async function writeNextLaunch(runtimeRoot: string, value: LaunchSave) { await writeJsonAtomic(join(runtimeRoot, 'webui', 'launch.json'), value); }
 
 async function ensureDefaultServerSettings(projectRoot: string, runtimeRoot: string) {
   const destination = join(runtimeRoot, 'factorio', 'config', 'server-settings.json');

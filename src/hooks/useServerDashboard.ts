@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { LogEntry, Overview } from '../api';
-import { overviewSchema, request, saveImportResultSchema } from '../api';
+import { logEntrySchema, operationSnapshotSchema, overviewSchema, request, saveImportResultSchema } from '../api';
 
-const EMPTY: Overview = { server: { status: 'stopped', running: false }, operations: { history: [] }, saves: { main: null, autosaves: [], imports: [], backups: [], nextLaunch: { kind: 'autosaves', name: '_autosave1.zip' } }, mods: { roots: [], installed: [] }, profiles: { activeId: 'default', items: [{ id: 'default', name: 'Default' }] }, connection: { address: 'loading…' }, config: { version: '2.0.77', channel: 'stable' }, settings: null };
+const EMPTY: Overview = { server: { status: 'stopped', running: false }, operations: { history: [] }, saves: { selected: null, autosaves: [], imports: [], backups: [], nextLaunch: { kind: 'autosaves', name: '_autosave1.zip' } }, mods: { roots: [], resolved: [], installed: [], pending: false }, profiles: { activeId: 'default', items: [{ id: 'default', name: 'Default' }] }, connection: { address: null, configured: false }, config: { version: '2.0.77', channel: 'stable' }, settings: null };
 
 export function useServerDashboard() {
   const [overview, setOverview] = useState(EMPTY);
@@ -23,8 +23,8 @@ export function useServerDashboard() {
     source.addEventListener('open', () => setLogStream('live'));
     source.addEventListener('error', () => setLogStream('retrying'));
     source.addEventListener('history-complete', () => setLogHistoryLoaded(true));
-    source.addEventListener('log', event => { const value = JSON.parse((event as MessageEvent).data) as LogEntry; setLogs(lines => [...lines.slice(-1999), value]); });
-    source.addEventListener('operation', event => { const operations = JSON.parse((event as MessageEvent).data) as Overview['operations']; setOverview(value => ({ ...value, operations })); if (!operations.active) void refresh(); });
+    source.addEventListener('log', event => { const value = logEntrySchema.safeParse(JSON.parse((event as MessageEvent).data)); if (value.success) setLogs(lines => [...lines.slice(-1999), value.data]); });
+    source.addEventListener('operation', event => { const parsed = operationSnapshotSchema.safeParse(JSON.parse((event as MessageEvent).data)); if (!parsed.success) return; setOverview(value => ({ ...value, operations: parsed.data })); if (!parsed.data.active) void refresh(); });
     return () => source.close();
   }, [refresh]);
 

@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { redact } from './redact.js';
 import type { OperationRecord } from './types.js';
+import { operationJournalSchema } from './persistence-schemas.js';
 
 export class OperationConflictError extends Error {}
 
@@ -16,7 +17,7 @@ export class OperationManager extends EventEmitter {
   async initialize() {
     await mkdir(dirname(this.journalPath), { recursive: true });
     try {
-      this.history = JSON.parse(await readFile(this.journalPath, 'utf8')) as OperationRecord[];
+      this.history = operationJournalSchema.parse(JSON.parse(await readFile(this.journalPath, 'utf8')));
       const unfinished = [...this.history].reverse().find(item => !item.result);
       if (unfinished) {
         unfinished.result = 'interrupted';
@@ -32,6 +33,17 @@ export class OperationManager extends EventEmitter {
   get snapshot() { return { active: this.active, history: this.history.slice(-20).reverse() }; }
 
   async run(kind: string, initialStage: OperationRecord['stage'], work: (setStage: (stage: OperationRecord['stage']) => Promise<void>) => Promise<void>) {
+    const record = await this.begin(kind, initialStage);
+    void this.execute(record, work).catch(() => undefined);
+    return record;
+  }
+
+  async runExclusive<T>(kind: string, initialStage: OperationRecord['stage'], work: (setStage: (stage: OperationRecord['stage']) => Promise<void>) => Promise<T>): Promise<T> {
+    const record = await this.begin(kind, initialStage);
+    return this.execute(record, work);
+  }
+
+  private async begin(kind: string, initialStage: OperationRecord['stage']) {
     if (this.active) throw new OperationConflictError(`Operation ${this.active.id} is already running`);
     const now = new Date().toISOString();
     const record: OperationRecord = { id: randomUUID(), kind, stage: initialStage, startedAt: now, updatedAt: now };
@@ -40,25 +52,34 @@ export class OperationManager extends EventEmitter {
     await this.persist();
     this.log({ operationId: record.id, kind, stage: initialStage }, 'operation started');
     this.emit('change', this.snapshot);
-    void (async () => {
-      try {
-        await work(async stage => { record.stage = stage; record.updatedAt = new Date().toISOString(); await this.persist(); this.log({ operationId: record.id, kind, stage }, 'operation stage changed'); this.emit('change', this.snapshot); });
-        record.stage = 'completed';
-        record.result = 'succeeded';
-      } catch (error) {
-        record.result = 'failed';
-        record.error = redact(error);
-        this.log({ operationId: record.id, kind, stage: record.stage, error: record.error }, 'operation failed');
-      } finally {
-        record.finishedAt = new Date().toISOString();
-        record.updatedAt = record.finishedAt;
-        this.active = undefined;
-        await this.persist();
-        this.log({ operationId: record.id, kind, result: record.result }, 'operation finished');
-        this.emit('change', this.snapshot);
-      }
-    })();
     return record;
+  }
+
+  private async execute<T>(record: OperationRecord, work: (setStage: (stage: OperationRecord['stage']) => Promise<void>) => Promise<T>): Promise<T> {
+    try {
+      const result = await work(async stage => {
+        record.stage = stage;
+        record.updatedAt = new Date().toISOString();
+        await this.persist();
+        this.log({ operationId: record.id, kind: record.kind, stage }, 'operation stage changed');
+        this.emit('change', this.snapshot);
+      });
+      record.stage = 'completed';
+      record.result = 'succeeded';
+      return result;
+    } catch (error) {
+      record.result = 'failed';
+      record.error = redact(error);
+      this.log({ operationId: record.id, kind: record.kind, stage: record.stage, error: record.error }, 'operation failed');
+      throw error;
+    } finally {
+      record.finishedAt = new Date().toISOString();
+      record.updatedAt = record.finishedAt;
+      this.active = undefined;
+      await this.persist();
+      this.log({ operationId: record.id, kind: record.kind, result: record.result }, 'operation finished');
+      this.emit('change', this.snapshot);
+    }
   }
 
   private async persist() {
