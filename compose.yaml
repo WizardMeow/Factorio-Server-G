@@ -1,0 +1,36 @@
+name: factorio-server-g
+
+services:
+  webui:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      PROJECT_ROOT: /project
+      FRONTEND_ROOT: /app/dist
+      HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}:/project"
+    working_dir: /app
+
+  factorio:
+    image: "factoriotools/factorio:${FACTORIO_VERSION:-latest}"
+    restart: "no"
+    stop_grace_period: 2m
+    ports:
+      - "${FACTORIO_PORT:-34197}:34197/udp"
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      LOAD_LATEST_SAVE: "false"
+      SAVE_NAME: save
+      GENERATE_NEW_SAVE: "false"
+      UPDATE_MODS_ON_START: "false"
+      USERNAME: "${FACTORIO_USERNAME:-}"
+      TOKEN: "${FACTORIO_TOKEN:-}"
+    volumes:
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime/factorio:/factorio"

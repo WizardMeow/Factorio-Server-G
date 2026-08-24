@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-server
+runtime
+.git
+.env
+.scratch

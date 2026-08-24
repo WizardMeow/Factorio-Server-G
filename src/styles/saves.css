@@ -1,0 +1,18 @@
+.save-card { min-height:61px; margin:15px 17px 0; padding:10px; display:flex; align-items:center; gap:11px; border:1px solid #2d332f; border-radius:8px; background:#0d100f; }
+.file-icon { width:38px; height:38px; display:grid; place-items:center; border:1px solid #454c48; border-radius:6px; color:var(--orange); font:9px ui-monospace; }
+.save-card b,.save-row b { display:block; overflow:hidden; color:#d8dedb; font:11px ui-monospace; text-overflow:ellipsis; }
+.save-card span,.save-row span { display:block; margin-top:4px; color:#606964; font-size:9px; }
+.compact>.wide { width:calc(100% - 34px); margin-left:17px; }
+.saves { margin-top:16px; overflow:hidden; }
+.upload { height:34px; }
+.upload input { display:none; }
+.save-columns { display:grid; grid-template-columns:repeat(3,1fr); }
+.save-columns>div { min-width:0; padding:17px 19px 21px; }
+.save-columns>div+div { border-left:1px solid #242a27; }
+.save-columns h4 { margin:0 0 11px; color:#8c9690; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+.save-columns h4 span { float:right; padding:1px 6px; border-radius:9px; background:#252a27; font:9px ui-monospace; }
+.save-list { display:flex; flex-direction:column; gap:7px; }
+.save-row { height:54px; padding:8px 9px; display:flex; align-items:center; justify-content:space-between; gap:6px; border:1px solid #282e2b; border-radius:7px; background:#0c0f0e; }
+.save-row>div:first-child { min-width:0; }
+.save-row>div:last-child { display:flex; gap:4px; }
+.save-row button,.save-row a { width:27px; height:27px; padding:0; display:grid; place-items:center; border:1px solid #303633; border-radius:5px; background:#171b19; color:#929b96; }

@@ -1,0 +1,43 @@
+{
+  "name": "factorio-server-g",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"rsbuild dev\" \"tsx watch server/index.ts\"",
+    "build": "rsbuild build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/server/index.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "rstest run"
+  },
+  "dependencies": {
+    "@fastify/multipart": "latest",
+    "@fastify/static": "latest",
+    "@fastify/vite": "latest",
+    "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-tabs": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@rsbuild/core": "latest",
+    "@rsbuild/plugin-react": "latest",
+    "fastify": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "sonner": "latest",
+    "tailwind-merge": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@rsbuild/plugin-type-check": "latest",
+    "@rstest/adapter-rsbuild": "latest",
+    "@rstest/core": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@tailwindcss/postcss": "latest",
+    "concurrently": "latest",
+    "tailwindcss": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
