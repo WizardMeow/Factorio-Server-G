@@ -34,14 +34,14 @@ describe('core HTTP flows', () => {
     const response = await app.inject({ method: 'PUT', url: '/api/config/version', payload: { version: '2.0.76' } });
     expect(response.statusCode).toBe(200);
     expect(adapter.calls).toEqual([]);
-    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/factorio.json'), 'utf8'))).toEqual({ version: '2.0.76' });
-    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/mods.pending.json'), 'utf8'))).toMatchObject({ factorioVersion: '2.0', selections: [] });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/factorio.json'), 'utf8'))).toEqual({ version: '2.0.76' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/mods.pending.json'), 'utf8'))).toMatchObject({ factorioVersion: '2.0', selections: [] });
   });
 
   test('backs up an individual autosave and restores prior running state', async () => {
     const { app, adapter, root } = await fixture();
     adapter.state = { status: 'ready', running: true };
-    await writeFile(join(root, 'runtime/factorio/saves/_autosave1.zip'), 'world');
+    await writeFile(join(root, 'runtime/profiles/p1/factorio/saves/_autosave1.zip'), 'world');
     const response = await app.inject({ method: 'POST', url: '/api/saves/backup-entry', payload: { kind: 'autosaves', name: '_autosave1.zip' } });
     expect(response.statusCode).toBe(202);
     await waitFor(() => adapter.calls.includes('start'));
@@ -50,8 +50,8 @@ describe('core HTTP flows', () => {
 
   test('lists configured mods and plans update, disable, and removal without mutating immediately', async () => {
     const { app, root } = await fixture();
-    await writeFile(join(root, 'config/profiles/default/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
-    await writeFile(join(root, 'config/profiles/default/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
+    await writeFile(join(root, 'config/profiles/p1/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
+    await writeFile(join(root, 'config/profiles/p1/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
     const overview = await app.inject({ method: 'GET', url: '/api/overview' });
     expect(overview.json().mods).toMatchObject({ roots: [{ name: 'demo', enabled: true }], resolved: [{ name: 'demo', version: '1.0.0' }], installed: [], pending: false });
 
@@ -66,41 +66,63 @@ describe('core HTTP flows', () => {
 
   test('selects an existing autosave for subsequent starts only while stopped', async () => {
     const { app, adapter, root } = await fixture();
-    await writeFile(join(root, 'runtime/factorio/saves/_autosave2.zip'), 'world');
+    await writeFile(join(root, 'runtime/profiles/p1/factorio/saves/_autosave2.zip'), 'world');
     const selected = await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave2.zip' } });
     expect(selected.statusCode).toBe(200);
-    expect(JSON.parse(await readFile(join(root, 'runtime/webui/launch.json'), 'utf8'))).toEqual({ kind: 'autosaves', name: '_autosave2.zip', saveName: '_autosave2.zip' });
+    expect(JSON.parse(await readFile(join(root, 'runtime/profiles/p1/webui/launch.json'), 'utf8'))).toEqual({ kind: 'autosaves', name: '_autosave2.zip', saveName: '_autosave2.zip' });
     adapter.state = { status: 'ready', running: true };
     const rejected = await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave1.zip' } });
     expect(rejected.statusCode).toBe(409);
   });
 
-  test('one-click import stages exact save configuration without downloading', async () => {
-    const { app, adapter, root } = await fixture();
-    const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture() }));
-    const boundary = 'factorio-save-boundary';
-    const payload = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="world.zip"\r\nContent-Type: application/zip\r\n\r\n`),
-      archive,
-      Buffer.from(`\r\n--${boundary}--\r\n`),
-    ]);
-    const response = await app.inject({ method: 'POST', url: '/api/saves/import', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
-    expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ name: 'world.zip', factorioVersion: '2.0.77', mods: [] });
-    expect(adapter.calls).toEqual([]);
-    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77' });
-    expect(JSON.parse(await readFile(join(root, 'runtime/webui/launch.json'), 'utf8'))).toEqual({ kind: 'imports', name: 'world.zip', saveName: '_webui-selected.zip' });
+  test('downloads autosave, import, and backup candidates', async () => {
+    const { app, root } = await fixture();
+    await writeFile(join(root, 'runtime/profiles/p1/factorio/saves/_autosave2.zip'), 'autosave');
+    await writeFile(join(root, 'runtime/profiles/p1/imports/imported.zip'), 'import');
+    await writeFile(join(root, 'runtime/profiles/p1/backups/backup.zip'), 'backup');
+    for (const [kind, name, content] of [['autosaves', '_autosave2.zip', 'autosave'], ['imports', 'imported.zip', 'import'], ['backups', 'backup.zip', 'backup']] as const) {
+      const response = await app.inject({ method: 'GET', url: `/api/saves/${kind}/${name}/download` });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toBe('application/zip');
+      expect(response.headers['content-disposition']).toBe(`attachment; filename="${name}"`);
+      expect(response.rawPayload.toString()).toBe(content);
+    }
   });
 
-  test('creates an isolated profile with its own staged mods and saves', async () => {
-    const { app, root } = await fixture();
-    const response = await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Py Hard' } });
+  test('ordinary import only adds a save candidate to the active profile', async () => {
+    const { app, adapter, root } = await fixture();
+    const response = await uploadSave(app, '/api/saves/import', 'ordinary.zip');
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toEqual({ id: 'py-hard', name: 'Py Hard' });
-    expect(JSON.parse(await readFile(join(root, 'config/profiles/py-hard/factorio.json'), 'utf8'))).toMatchObject({ version: '2.0.77' });
-    expect(JSON.parse(await readFile(join(root, 'config/profiles/py-hard/mods.pending.json'), 'utf8'))).toMatchObject({ selections: [] });
-    expect((await app.inject({ method: 'POST', url: '/api/profiles/activate', payload: { id: 'py-hard' } })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/api/overview' })).json().profiles.activeId).toBe('py-hard');
+    expect(response.json()).toEqual({ name: 'ordinary.zip' });
+    expect(adapter.calls).toEqual([]);
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77', channel: 'stable' });
+    await expect(readFile(join(root, 'runtime/profiles/p1/webui/launch.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(root, 'runtime/profiles/p1/imports/ordinary.zip'))).toEqual(expect.any(Buffer));
+  });
+
+  test('quick import creates and activates an isolated profile from save configuration', async () => {
+    const { app, adapter, root } = await fixture();
+    const response = await uploadSave(app, '/api/profiles/quick-import', 'world.zip');
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ profile: { id: 'p2', name: 'P2' }, save: { name: 'world.zip' }, factorioVersion: '2.0.77', mods: [] });
+    expect(adapter.calls).toEqual([]);
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77', channel: 'stable' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p2/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77' });
+    expect(JSON.parse(await readFile(join(root, 'runtime/profiles/p2/webui/launch.json'), 'utf8'))).toEqual({ kind: 'imports', name: 'world.zip', saveName: '_webui-selected.zip' });
+    expect(JSON.parse(await readFile(join(root, 'runtime/webui/profile.json'), 'utf8'))).toEqual({ activeId: 'p2' });
+  });
+
+  test('creates, renames, activates, and deletes isolated profiles', async () => {
+    const { app, root } = await fixture();
+    const response = await app.inject({ method: 'POST', url: '/api/profiles' });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({ id: 'p2', name: 'P2' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p2/factorio.json'), 'utf8'))).toMatchObject({ version: '2.0.77' });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p2/mods.pending.json'), 'utf8'))).toMatchObject({ selections: [] });
+    expect((await app.inject({ method: 'PATCH', url: '/api/profiles/p2', payload: { name: 'Py Hard' } })).json()).toEqual({ id: 'p2', name: 'Py Hard' });
+    expect((await app.inject({ method: 'POST', url: '/api/profiles/activate', payload: { id: 'p2' } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'DELETE', url: '/api/profiles/p2' })).statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: '/api/overview' })).json().profiles).toMatchObject({ activeId: 'p1', items: [{ id: 'p1', name: 'P1' }] });
   });
 });
 
@@ -117,6 +139,17 @@ async function fixture() {
   return { app, adapter, root };
 }
 async function waitFor(predicate: () => boolean) { for (let i = 0; i < 50; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('timeout'); }
+
+async function uploadSave(app: Awaited<ReturnType<typeof buildApp>>, url: string, filename: string) {
+  const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture() }));
+  const boundary = 'factorio-save-boundary';
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/zip\r\n\r\n`),
+    archive,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return app.inject({ method: 'POST', url, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+}
 
 function levelInitFixture() {
   const bytes: number[] = [];

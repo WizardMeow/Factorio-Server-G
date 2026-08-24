@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
-import { constants, createReadStream, createWriteStream } from 'node:fs';
+import { constants, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
@@ -20,7 +20,7 @@ import { inspectFactorioSave } from './save-inspector.js';
 import { fetchFactorioVersions } from './factorio-versions.js';
 import { ProfileDataStore } from './profile-data-store.js';
 import { ServerOperations } from './server-operations.js';
-import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, profileActivateBodySchema, profileCreateBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveImportResultSchema, saveNextLaunchBodySchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
+import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, profileActivateBodySchema, profileCreateBodySchema, profileParamsSchema, profileQuickImportResultSchema, profileRenameBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveNextLaunchBodySchema, saveUploadResultSchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
 
 interface AppOptions { projectRoot: string; adapter: ComposeAdapter; serveFrontend?: boolean; modProvider?: ModMetadataProvider }
 const BUILT_IN_MODS = new Set(['base', 'core', 'elevated-rails', 'quality', 'space-age']);
@@ -77,10 +77,10 @@ export async function buildApp(options: AppOptions) {
 
   app.post('/api/profiles', async (request, reply) => {
     const parsed = profileCreateBodySchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'Profile name is required' });
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid Profile creation request' });
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
     const profile = await operations.runExclusive('create-profile', 'recreating', async () => {
-      const created = await profiles.create(parsed.data.name);
+      const created = await profiles.create();
       const context = await profiles.context(created.id);
       const profileInstaller = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created.id, ...fields }, message));
       await Promise.all([new SaveService(context.runtimeRoot).initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot), profileInstaller.stageFromCurrentConfig()]);
@@ -98,6 +98,32 @@ export async function buildApp(options: AppOptions) {
     await operations.runExclusive('activate-profile', 'recreating', async () => { await profiles.activate(parsed.data.id); await activeServices(); });
     request.log.info({ profileId: parsed.data.id }, 'profile activated');
     return reply.send({ id: parsed.data.id });
+  });
+
+  app.patch('/api/profiles/:id', async (request, reply) => {
+    const params = profileParamsSchema.safeParse(request.params);
+    const body = profileRenameBodySchema.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: 'A valid Profile and name are required' });
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    const profile = await operations.runExclusive('rename-profile', 'recreating', () => profiles.rename(params.data.id, body.data.name));
+    request.log.info({ profileId: profile.id, profileName: profile.name }, 'profile renamed');
+    return reply.send(profile);
+  });
+
+  app.delete('/api/profiles/:id', async (request, reply) => {
+    const parsed = profileParamsSchema.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'A valid Profile is required' });
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before deleting a Profile' });
+    const items = await profiles.list();
+    if (items.length < 2) return reply.code(409).send({ error: 'The last Profile cannot be deleted' });
+    if (!items.some(profile => profile.id === parsed.data.id)) return reply.code(404).send({ error: 'Profile not found' });
+    await operations.runExclusive('delete-profile', 'recreating', async () => {
+      if (await profiles.activeId() === parsed.data.id) await profiles.activate(items.find(profile => profile.id !== parsed.data.id)!.id);
+      await profiles.remove(parsed.data.id);
+    });
+    request.log.info({ profileId: parsed.data.id }, 'profile deleted');
+    return reply.code(204).send();
   });
 
   app.post('/api/mods/plan', async (request, reply) => {
@@ -196,39 +222,62 @@ export async function buildApp(options: AppOptions) {
   });
 
   app.post('/api/saves/import', async (request, reply) => {
-    const { profile, saves, installer, data } = await activeServices();
+    const { profile, saves } = await activeServices();
     if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
-    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before importing a startup save' });
     const file = await request.file();
     if (!file || !file.filename.endsWith('.zip')) return reply.code(400).send({ error: 'A .zip save is required' });
     const safeName = basename(file.filename);
     const temp = join(saves.importsDir, `${safeName}.uploading`);
     const destination = join(saves.importsDir, safeName);
     try {
-      const result = await operations.runExclusive('import-save', 'recreating', async () => {
+      await operations.runExclusive('import-save', 'recreating', async () => {
+        await pipeline(file.file, createWriteStream(temp));
+        await rename(temp, destination);
+      });
+      request.log.info({ profileId: profile.id, saveName: safeName }, 'save imported as candidate');
+      return reply.code(201).send(saveUploadResultSchema.parse({ name: safeName }));
+    } catch (error) {
+      await rm(temp, { force: true });
+      request.log.error({ profileId: profile.id, saveName: safeName, error: redact(error) }, 'save candidate import failed');
+      throw error;
+    }
+  });
+
+  app.post('/api/profiles/quick-import', async (request, reply) => {
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before quick import' });
+    const file = await request.file();
+    if (!file || !file.filename.endsWith('.zip')) return reply.code(400).send({ error: 'A .zip save is required' });
+    const safeName = basename(file.filename);
+    const temp = join(runtimeRoot, 'webui', `${safeName}.${Date.now()}.uploading`);
+    let created: Awaited<ReturnType<ProfileService['create']>> | undefined;
+    try {
+      const result = await operations.runExclusive('quick-import-profile', 'recreating', async () => {
         await pipeline(file.file, createWriteStream(temp));
         const inspection = await inspectFactorioSave(temp);
         const roots = inspection.mods.filter(mod => !BUILT_IN_MODS.has(mod.name)).map(mod => ({ ...mod, enabled: true }));
         const plan = await resolveConfiguredPlan(resolver, inspection.factorioVersion, roots);
-        const trackedPaths = [
-          destination,
-          join(profile.configRoot, 'factorio.json'), join(profile.configRoot, 'mods.json'), join(profile.configRoot, 'mods.lock.json'), join(profile.configRoot, 'mods.pending.json'),
-          join(profile.runtimeRoot, 'factorio', 'saves', '_webui-selected.zip'), join(profile.runtimeRoot, 'webui', 'launch.json'),
-        ];
-        return data.withFileRollback(trackedPaths, async () => {
-          await rename(temp, destination);
-          await installer.stage(plan);
-          await data.writeFactorioConfig({ version: inspection.factorioVersion });
-          const materialized = await saves.materialize('imports', safeName);
-          await data.writeNextLaunch({ kind: 'imports', name: safeName, saveName: materialized });
-          return { inspection, roots, plan, materialized };
-        });
+        created = await profiles.create();
+        const context = await profiles.context(created.id);
+        const saves = new SaveService(context.runtimeRoot);
+        const data = new ProfileDataStore(context.configRoot, context.runtimeRoot);
+        const installer = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created!.id, ...fields }, message));
+        await Promise.all([saves.initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot)]);
+        const destination = join(saves.importsDir, safeName);
+        await rename(temp, destination);
+        await installer.stage(plan);
+        await data.writeFactorioConfig({ version: inspection.factorioVersion });
+        const materialized = await saves.materialize('imports', safeName);
+        await data.writeNextLaunch({ kind: 'imports', name: safeName, saveName: materialized });
+        await profiles.activate(created.id);
+        return { inspection, roots, plan, materialized };
       });
-      request.log.info({ profileId: profile.id, saveName: safeName, runtimeSaveName: result.materialized, factorioVersion: result.inspection.factorioVersion, modCount: result.roots.length, planId: result.plan.id }, 'save imported and startup configuration staged');
-      return reply.code(201).send(saveImportResultSchema.parse({ name: safeName, factorioVersion: result.inspection.factorioVersion, mods: result.roots.map(({ name, version }) => ({ name, version: version! })), warning: result.inspection.warning }));
+      request.log.info({ profileId: created!.id, saveName: safeName, runtimeSaveName: result.materialized, factorioVersion: result.inspection.factorioVersion, modCount: result.roots.length, planId: result.plan.id }, 'profile created from save and activated');
+      return reply.code(201).send(profileQuickImportResultSchema.parse({ profile: created, save: { name: safeName }, factorioVersion: result.inspection.factorioVersion, mods: result.roots.map(({ name, version }) => ({ name, version: version! })), warning: result.inspection.warning }));
     } catch (error) {
       await rm(temp, { force: true });
-      request.log.error({ saveName: safeName, error: redact(error) }, 'save import configuration failed');
+      if (created) await profiles.remove(created.id);
+      request.log.error({ profileId: created?.id, saveName: safeName, error: redact(error) }, 'quick import profile creation failed');
       throw error;
     }
   });
@@ -273,13 +322,14 @@ export async function buildApp(options: AppOptions) {
     return reply.send({ kind: parsed.data.kind, name: parsed.data.name });
   });
 
-  app.get('/api/saves/backups/:name', async (request, reply) => {
+  app.get('/api/saves/:kind/:name/download', async (request, reply) => {
     const { saves } = await activeServices();
     const parsed = saveDownloadParamsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid save name' });
     const name = basename(parsed.data.name);
     if (name !== parsed.data.name) return reply.code(400).send({ error: 'Invalid save name' });
-    return reply.type('application/zip').header('content-disposition', `attachment; filename="${name}"`).send(createReadStream(join(saves.backupsDir, name)));
+    request.log.info({ saveKind: parsed.data.kind, saveName: name }, 'save download started');
+    return reply.type('application/zip').header('content-disposition', `attachment; filename="${name}"`).send(saves.openEntry(parsed.data.kind, name));
   });
 
   app.get('/api/events', async (request, reply) => {

@@ -16,10 +16,11 @@ interface Props {
   logHistoryLoaded: boolean;
   clearLogs(source: LogEntry['source']): void;
   mutate(path: string, body?: unknown, method?: string): Promise<void>;
-  upload(file?: File): Promise<void>;
+  uploadSave(file?: File): Promise<void>;
+  quickImportProfile(file?: File): Promise<void>;
 }
 
-export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, clearLogs, mutate, upload }: Props) {
+export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, clearLogs, mutate, uploadSave, quickImportProfile }: Props) {
   const busy = Boolean(overview.operations.active);
   const tabClass = 'group min-w-[164px] justify-start border-0 bg-transparent px-[15px] py-2.5 text-[#707a74] data-[state=active]:bg-[#1a1f1c] data-[state=active]:text-[#e1e6e3] data-[state=active]:shadow-[inset_0_0_0_1px_#303632] max-[560px]:min-w-0 max-[560px]:flex-1 max-[560px]:px-[9px]';
   const tabLabelClass = 'grid gap-0.5 text-left text-xs';
@@ -35,7 +36,7 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
     <Tabs.Content className="outline-none" value="configure">
       {overview.server.running && <div className="mb-4 flex items-center gap-3 rounded-lg border border-[#49361f] bg-[#24190f] px-4 py-[13px] text-[11px] text-[#bd9b78]"><LockKeyhole className="shrink-0 text-[var(--orange)]" size={17} /><span className="grid gap-[3px]"><b className="text-[#e2c6a8]">服务器运行中，配置已锁定</b>停止服务器后可修改游戏版本与模组。</span></div>}
       <div className="grid gap-4">
-        <ProfileSwitcher profiles={overview.profiles} disabled={busy || overview.server.running} onAction={mutate} />
+        <ProfileSwitcher profiles={overview.profiles} disabled={busy || overview.server.running} onAction={mutate} onQuickImport={quickImportProfile} />
         <VersionCard current={overview.config.version} channel={overview.config.channel} busy={busy} running={overview.server.running} onApply={(version, channel) => mutate('/api/config/version', { version, channel }, 'PUT')} />
         <ModPlanner mods={overview.mods} busy={busy} running={overview.server.running} onApply={planId => mutate('/api/mods/apply', { planId })} />
       </div>
@@ -44,7 +45,7 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
     <Tabs.Content className="outline-none" value="saves">
       <div className="grid grid-cols-[310px_minmax(0,1fr)] items-start gap-4 max-[850px]:grid-cols-1">
         <StartupSaveCard save={overview.saves.selected} />
-        <SaveManager saves={overview.saves} busy={busy} running={overview.server.running} onAction={mutate} onUpload={upload} />
+        <SaveManager saves={overview.saves} busy={busy} running={overview.server.running} onAction={mutate} onUpload={uploadSave} />
       </div>
     </Tabs.Content>
 

@@ -30,7 +30,7 @@ export const versionOptionsSchema = z.object({ latest: exactVersionSchema, stabl
 export const saveNextLaunchBodySchema = z.object({ kind: saveCollectionSchema, name: z.string().endsWith('.zip') });
 export const saveBackupBodySchema = z.object({ kind: saveCollectionSchema, name: z.string().endsWith('.zip') });
 export const saveDeleteBodySchema = z.object({ kind: z.enum(['imports', 'backups']), name: z.string().endsWith('.zip') });
-export const saveDownloadParamsSchema = z.object({ name: z.string().endsWith('.zip') });
+export const saveDownloadParamsSchema = z.object({ kind: saveCollectionSchema, name: z.string().endsWith('.zip') });
 export const modPlanBodySchema = z.object({ input: z.string().min(1), version: z.string().optional(), optional: z.array(z.string()).optional() });
 export const modChangePlanBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('update'), name: z.string().min(1), version: z.string().optional() }),
@@ -38,9 +38,18 @@ export const modChangePlanBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('set-enabled'), name: z.string().min(1), enabled: z.boolean() }),
 ]);
 export const modApplyBodySchema = z.object({ planId: z.string().uuid() });
-export const profileCreateBodySchema = z.object({ name: z.string().trim().min(1).max(64) });
+export const profileCreateBodySchema = z.object({}).strict().optional();
 export const profileActivateBodySchema = z.object({ id: z.string().min(1) });
-export const saveImportResultSchema = z.object({ name: z.string(), factorioVersion: exactVersionSchema, mods: z.array(z.object({ name: z.string(), version: z.string() })), warning: z.string() });
+export const profileParamsSchema = z.object({ id: z.string().regex(/^p\d+$/) });
+export const profileRenameBodySchema = z.object({ name: z.string().trim().min(1).max(64) });
+export const saveUploadResultSchema = z.object({ name: z.string() });
+export const profileQuickImportResultSchema = z.object({
+  profile: z.object({ id: z.string(), name: z.string() }),
+  save: saveUploadResultSchema,
+  factorioVersion: exactVersionSchema,
+  mods: z.array(z.object({ name: z.string(), version: z.string() })),
+  warning: z.string(),
+});
 
 export type SaveEntryDto = z.infer<typeof saveEntrySchema>;
 export type OperationDto = z.infer<typeof operationSchema>;
@@ -50,4 +59,5 @@ export type ConfiguredModDto = z.infer<typeof configuredModSchema>;
 export type InstalledModDto = z.infer<typeof installedModSchema>;
 export type LogEntryDto = z.infer<typeof logEntrySchema>;
 export type VersionOptionsDto = z.infer<typeof versionOptionsSchema>;
-export type SaveImportResultDto = z.infer<typeof saveImportResultSchema>;
+export type SaveUploadResultDto = z.infer<typeof saveUploadResultSchema>;
+export type ProfileQuickImportResultDto = z.infer<typeof profileQuickImportResultSchema>;

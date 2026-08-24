@@ -9,8 +9,13 @@ services:
         HTTPS_PROXY: "${OUTBOUND_HTTPS_PROXY:-}"
         NO_PROXY: "${OUTBOUND_NO_PROXY:-}"
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     ports:
-      - "${WEBUI_PORT:-3000}:3000"
+      - "${WEBUI_BIND_ADDRESS:-${FACTORIO_BIND_ADDRESS:-127.0.0.1}}:${WEBUI_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -23,7 +28,10 @@ services:
       NO_PROXY: "${OUTBOUND_NO_PROXY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}:/project"
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/compose.yaml:/project/compose.yaml:ro"
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/.env:/project/.env:ro"
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/config:/project/config"
+      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime:/project/runtime"
     working_dir: /app
 
   factorio:
@@ -42,4 +50,4 @@ services:
       USERNAME: "${FACTORIO_USERNAME:-}"
       TOKEN: "${FACTORIO_TOKEN:-}"
     volumes:
-      - "${FACTORIO_DATA_PATH:-${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime/factorio}:/factorio"
+      - "${FACTORIO_DATA_PATH:-${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime/profiles/p1/factorio}:/factorio"

@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
@@ -30,6 +31,7 @@ export class SaveService {
     return backupName;
   }
   async deleteEntry(kind: 'imports' | 'backups', name: string) { this.validateName(name); await rm(this.pathFor(kind, name)); }
+  openEntry(kind: 'autosaves' | 'imports' | 'backups', name: string) { this.validateName(name); return createReadStream(this.pathFor(kind, name)); }
   async materialize(kind: 'autosaves' | 'imports' | 'backups', name: string) {
     this.validateName(name);
     if (kind === 'autosaves') return name;
