@@ -32,7 +32,8 @@ docker compose up -d webui
 - 启动、优雅停止和重启 Factorio，所有变更操作共享一把锁
 - 拉取并重建指定的 `latest`、`stable` 或精确版本镜像
 - 首屏 500 行 Docker 日志与 SSE 实时跟随
-- 导入、备份、下载和恢复镜像的固定主存档 `_autosave1.zip`
+- 导入、备份、下载和恢复镜像固定加载的 `_autosave1.zip`；它同时保留在 autosave 轮转槽列表中
+- 存档、导入和备份按修改时间倒序展示，并显示完整修改时间与文件大小
 - 只读显示 `server-settings.json` 的非敏感字段
 - 操作流水持久化，重启后标记未完成操作为 interrupted
 - 输入官方 Mod Portal URL 或模组名并递归解析 required dependencies

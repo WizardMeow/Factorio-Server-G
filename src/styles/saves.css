@@ -1,6 +1,7 @@
 .save-card { min-height:61px; margin:15px 17px 0; padding:10px; display:flex; align-items:center; gap:11px; border:1px solid #2d332f; border-radius:8px; background:#0d100f; }
 .file-icon { width:38px; height:38px; display:grid; place-items:center; border:1px solid #454c48; border-radius:6px; color:var(--orange); font:9px ui-monospace; }
 .save-card b,.save-row b { display:block; overflow:hidden; color:#d8dedb; font:11px ui-monospace; text-overflow:ellipsis; }
+.active-save { margin-left:6px; color:var(--orange); font:8px ui-monospace; text-transform:uppercase; }
 .save-card span,.save-row span { display:block; margin-top:4px; color:#606964; font-size:9px; }
 .compact>.wide { width:calc(100% - 34px); margin-left:17px; }
 .saves { margin-top:16px; overflow:hidden; }
