@@ -7,6 +7,7 @@ export class FakeAdapter implements ComposeAdapter {
   gate?: Promise<void>;
   private async act(name: string, next?: ContainerState) { this.calls.push(name); await this.gate; if (next) this.state = next; }
   inspect = async () => this.state;
+  connectionAddress = async () => '100.64.0.1:34197';
   start = async () => this.act('start', { status: 'ready', running: true });
   stop = async () => this.act('stop', { status: 'stopped', running: false });
   restart = async () => this.act('restart', { status: 'ready', running: true });

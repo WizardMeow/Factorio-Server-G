@@ -58,6 +58,7 @@ export async function buildApp(options: AppOptions) {
     const saveList = await saves.list();
     const launch = await data.readNextLaunch();
     const selectedSave = saveList[launch.kind].find(entry => entry.name === launch.name) ?? null;
+    const connectionAddress = await options.adapter.connectionAddress();
     return {
       server: await options.adapter.inspect(), operations: operations.snapshot,
       saves: { autosaves: saveList.autosaves, imports: saveList.imports, backups: saveList.backups, selected: selectedSave, nextLaunch: { kind: launch.kind, name: launch.name } }, config: await data.readFactorioConfig(),
@@ -67,9 +68,7 @@ export async function buildApp(options: AppOptions) {
         installed: await installer.installedMods(), pending: await installer.hasPending(),
       },
       profiles: { activeId: profile.id, items: await profiles.list() },
-      connection: process.env.FACTORIO_ADDRESS
-        ? { address: `${process.env.FACTORIO_ADDRESS}:${process.env.FACTORIO_PORT || '34197'}`, configured: true }
-        : { address: null, configured: false },
+      connection: { address: connectionAddress, configured: Boolean(connectionAddress) },
       settings: await data.readSettings(), modRollbackAvailable: Boolean(await installer.findRollbackCandidate()),
     };
   });

@@ -15,7 +15,6 @@ services:
       NODE_ENV: production
       PORT: 3000
       FACTORIO_PORT: "${FACTORIO_PORT:-34197}"
-      FACTORIO_ADDRESS: "${FACTORIO_ADDRESS:-}"
       PROJECT_ROOT: /project
       FRONTEND_ROOT: /app/dist
       HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
@@ -32,7 +31,7 @@ services:
     restart: "no"
     stop_grace_period: 2m
     ports:
-      - "${FACTORIO_PORT:-34197}:34197/udp"
+      - "${FACTORIO_BIND_ADDRESS:-0.0.0.0}:${FACTORIO_PORT:-34197}:34197/udp"
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"

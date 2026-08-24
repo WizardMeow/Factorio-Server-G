@@ -21,6 +21,7 @@ export interface OperationRecord {
 
 export interface ComposeAdapter {
   inspect(): Promise<ContainerState>;
+  connectionAddress(): Promise<string | null>;
   start(): Promise<void>;
   stop(): Promise<void>;
   restart(): Promise<void>;

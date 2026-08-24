@@ -10,6 +10,11 @@ export const launchSaveSchema = z.object({ kind: z.enum(['autosaves', 'imports',
 export const partialLaunchSaveSchema = launchSaveSchema.partial();
 export const serverSettingsSchema = z.record(z.string(), z.unknown());
 export const composeContainerSchema = z.object({ State: z.string().optional(), Health: z.string().optional(), Image: z.string().optional() }).passthrough();
+export const composeProjectSchema = z.object({
+  services: z.record(z.string(), z.object({
+    ports: z.array(z.object({ host_ip: z.string().optional(), published: z.union([z.string(), z.number()]).optional(), target: z.union([z.string(), z.number()]).optional(), protocol: z.string().optional() }).passthrough()).optional(),
+  }).passthrough()),
+}).passthrough();
 export const operationRecordSchema = z.object({
   id: z.string(), kind: z.string(),
   stage: z.enum(['stopped', 'pulling', 'recreating', 'starting', 'ready', 'stopping', 'failed', 'backing-up', 'restoring', 'completed']),

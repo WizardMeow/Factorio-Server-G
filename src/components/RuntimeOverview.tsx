@@ -13,7 +13,7 @@ export function RuntimeOverview({ overview }: { overview: Overview }) {
 
   return <section className="mt-4 grid gap-4">
     <div className="panel flex items-center justify-between gap-6 px-6 py-[22px] max-[560px]:flex-col max-[560px]:items-start">
-      <div><span className="eyebrow">CONNECTION ADDRESS</span><h3 className="mb-1 mt-[5px] text-base">{overview.connection.configured ? '局域网联机地址' : '尚未配置联机地址'}</h3><p className="m-0 text-[11px] text-[#69736d]">{overview.connection.configured ? '点击复制后粘贴到 Factorio 的“连接到地址”。' : '请在 .env 中设置 FACTORIO_ADDRESS 为服务器的 Tailscale 地址。'}</p></div>
+      <div><span className="eyebrow">COMPOSE UDP BINDING</span><h3 className="mb-1 mt-[5px] text-base">{overview.connection.configured ? '局域网联机地址' : '无法确定联机地址'}</h3><p className="m-0 text-[11px] text-[#69736d]">{overview.connection.configured ? '地址自动取自 Factorio 服务的 Compose UDP 端口绑定。' : '请在 .env 中把 FACTORIO_BIND_ADDRESS 设置为服务器的 Tailscale IP。'}</p></div>
       {overview.connection.address && <CopyConnectionButton address={overview.connection.address} />}
     </div>
     <div className="grid grid-cols-5 gap-3 max-[850px]:grid-cols-2 max-[560px]:grid-cols-1">

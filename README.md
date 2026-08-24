@@ -19,7 +19,7 @@ mkdir -p runtime/factorio/saves runtime/imports runtime/backups runtime/webui
 docker compose up -d webui
 ```
 
-启动前把 `.env` 的 `HOST_PROJECT_ROOT` 改成仓库在 Docker 宿主机上的绝对路径，并把 `FACTORIO_ADDRESS` 设置为该服务器的 Tailscale IP 或 MagicDNS 名称。这让 WebUI 容器内发起的 Compose 操作仍能建立正确的宿主机 bind mount，同时避免把浏览器访问地址误当成 Factorio 联机地址。未配置时 WebUI 会明确提示，不会生成 JOIN 按钮。
+启动前把 `.env` 的 `HOST_PROJECT_ROOT` 改成仓库在 Docker 宿主机上的绝对路径，并把 `FACTORIO_BIND_ADDRESS` 设置为该服务器的 Tailscale IP。这让 WebUI 容器内发起的 Compose 操作仍能建立正确的宿主机 bind mount。WebUI 会从解析后的 Compose UDP 端口绑定自动取得 JOIN 地址；绑定 `0.0.0.0` 时会明确提示地址不可确定，不会生成虚假 JOIN 按钮。
 
 如果服务器需要代理访问 Docker Hub 或 Mod Portal，在 `.env` 中显式配置 `OUTBOUND_HTTP_PROXY`、`OUTBOUND_HTTPS_PROXY` 和 `OUTBOUND_NO_PROXY`。宿主机 shell 的代理不会被默认透传。
 

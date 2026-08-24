@@ -4,7 +4,7 @@ import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ComposeAdapter, ContainerState } from './types.js';
 import { redact } from './redact.js';
-import { composeContainerSchema, factorioConfigSchema, partialLaunchSaveSchema, profileStateSchema } from './persistence-schemas.js';
+import { composeContainerSchema, composeProjectSchema, factorioConfigSchema, partialLaunchSaveSchema, profileStateSchema } from './persistence-schemas.js';
 
 export class ComposeCommandError extends Error {}
 
@@ -19,7 +19,7 @@ export class DockerComposeAdapter implements ComposeAdapter {
     return new Promise((resolve, reject) => {
       void this.environment().then(env => {
       const startedAt = Date.now();
-      const management = !['ps', 'logs'].includes(args[0] ?? '');
+      const management = !['ps', 'logs', 'config'].includes(args[0] ?? '');
       this.log({ service: this.service, composeArgs: args }, 'docker compose command started');
       if (management) this.emitManagement(`docker compose ${args.join(' ')} started`);
       const child = spawn('docker', ['compose', ...args], { cwd: this.cwd, env });
@@ -68,6 +68,13 @@ export class DockerComposeAdapter implements ComposeAdapter {
       health: row.Health || undefined,
       image: row.Image,
     };
+  }
+
+  async connectionAddress() {
+    const project = composeProjectSchema.parse(JSON.parse(await this.run(['config', '--format', 'json'])));
+    const binding = project.services[this.service]?.ports?.find(port => String(port.target) === '34197' && (port.protocol ?? 'tcp') === 'udp');
+    const host = binding?.host_ip;
+    return host && host !== '0.0.0.0' && host !== '::' && binding.published ? `${host}:${binding.published}` : null;
   }
 
   async start() { this.readinessSince = new Date().toISOString(); await this.run(['up', '-d', '--no-deps', this.service]); }
