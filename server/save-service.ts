@@ -2,6 +2,7 @@ import { copyFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 export interface SaveEntry { name: string; size: number; modifiedAt: string }
+export const MAIN_SAVE_NAME = '_autosave1.zip';
 
 export class SaveService {
   readonly savesDir: string;
@@ -14,18 +15,18 @@ export class SaveService {
   }
   async initialize() { await Promise.all([this.savesDir, this.importsDir, this.backupsDir].map(path => mkdir(path, { recursive: true }))); }
   async list() {
-    return { main: await this.info(join(this.savesDir, 'save.zip')), autosaves: await this.entries(this.savesDir, /^_autosave.*\.zip$/), imports: await this.entries(this.importsDir), backups: await this.entries(this.backupsDir) };
+    return { main: await this.info(join(this.savesDir, MAIN_SAVE_NAME)), autosaves: await this.entries(this.savesDir, /^_autosave(?!1\.zip$).*\.zip$/), imports: await this.entries(this.importsDir), backups: await this.entries(this.backupsDir) };
   }
   async backup(prefix = 'manual') {
     const name = `${prefix}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-    await copyFile(join(this.savesDir, 'save.zip'), join(this.backupsDir, name));
+    await copyFile(join(this.savesDir, MAIN_SAVE_NAME), join(this.backupsDir, name));
     return name;
   }
   async promote(kind: 'imports' | 'backups', name: string) {
     this.validateName(name);
-    const current = await this.info(join(this.savesDir, 'save.zip'));
+    const current = await this.info(join(this.savesDir, MAIN_SAVE_NAME));
     if (current) await this.backup('protected');
-    await copyFile(join(kind === 'imports' ? this.importsDir : this.backupsDir, name), join(this.savesDir, 'save.zip'));
+    await copyFile(join(kind === 'imports' ? this.importsDir : this.backupsDir, name), join(this.savesDir, MAIN_SAVE_NAME));
   }
   private validateName(name: string) { if (basename(name) !== name || !name.endsWith('.zip')) throw new Error('Invalid save name'); }
   private async entries(dir: string, pattern = /\.zip$/): Promise<SaveEntry[]> {

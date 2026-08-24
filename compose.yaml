@@ -5,9 +5,9 @@ services:
     build:
       context: .
       args:
-        HTTP_PROXY: "${http_proxy:-}"
-        HTTPS_PROXY: "${https_proxy:-}"
-        NO_PROXY: "${no_proxy:-}"
+        HTTP_PROXY: "${OUTBOUND_HTTP_PROXY:-}"
+        HTTPS_PROXY: "${OUTBOUND_HTTPS_PROXY:-}"
+        NO_PROXY: "${OUTBOUND_NO_PROXY:-}"
     restart: unless-stopped
     ports:
       - "${WEBUI_PORT:-3000}:3000"
@@ -17,9 +17,9 @@ services:
       PROJECT_ROOT: /project
       FRONTEND_ROOT: /app/dist
       HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
-      HTTP_PROXY: "${http_proxy:-}"
-      HTTPS_PROXY: "${https_proxy:-}"
-      NO_PROXY: "${no_proxy:-}"
+      HTTP_PROXY: "${OUTBOUND_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${OUTBOUND_HTTPS_PROXY:-}"
+      NO_PROXY: "${OUTBOUND_NO_PROXY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}:/project"
@@ -35,7 +35,7 @@ services:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
       LOAD_LATEST_SAVE: "false"
-      SAVE_NAME: save
+      SAVE_NAME: _autosave1
       GENERATE_NEW_SAVE: "false"
       UPDATE_MODS_ON_START: "false"
       USERNAME: "${FACTORIO_USERNAME:-}"

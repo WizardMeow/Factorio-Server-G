@@ -30,7 +30,7 @@ describe('core HTTP flows', () => {
   test('stops, backs up, and restores prior running state', async () => {
     const { app, adapter, root } = await fixture();
     adapter.state = { status: 'ready', running: true };
-    await writeFile(join(root, 'runtime/factorio/saves/save.zip'), 'world');
+    await writeFile(join(root, 'runtime/factorio/saves/_autosave1.zip'), 'world');
     const response = await app.inject({ method: 'POST', url: '/api/saves/backup' });
     expect(response.statusCode).toBe(202);
     await waitFor(() => adapter.calls.includes('start'));

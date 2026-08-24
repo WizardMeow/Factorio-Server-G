@@ -150,7 +150,7 @@ export async function buildApp(options: AppOptions) {
     const parsed = savePromoteBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'kind and a .zip name are required' });
     const { kind, name } = parsed.data;
-    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before replacing save.zip' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before replacing the main save' });
     const operation = await operations.run('restore-save', 'restoring', async () => saves.promote(kind, name));
     return reply.code(202).send(operation);
   });
@@ -184,6 +184,7 @@ async function waitUntilRunning(adapter: ComposeAdapter, setStage: (stage: 'read
   for (let attempt = 0; attempt < 60; attempt++) {
     const state = await adapter.inspect();
     if (state.status === 'ready') { await setStage('ready'); return; }
+    if (attempt >= 2 && !state.running) throw new Error('Factorio container exited during startup; inspect its logs for details');
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   throw new Error('Factorio did not become ready before timeout');

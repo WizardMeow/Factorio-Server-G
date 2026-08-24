@@ -14,7 +14,7 @@ interface Props {
 export function MainSaveCard({ save, busy, onBackup }: { save: SaveEntry | null; busy: boolean; onBackup(): void }) {
   return <section className="panel compact">
     <PanelHeader eyebrow="ACTIVE WORLD" title="Main Save"><Archive size={18} /></PanelHeader>
-    <div className="save-card">{save ? <><div className="file-icon">ZIP</div><div><b>{save.name}</b><span>{formatSize(save.size)} · {new Date(save.modifiedAt).toLocaleString()}</span></div></> : <div className="empty">No save.zip imported yet</div>}</div>
+    <div className="save-card">{save ? <><div className="file-icon">ZIP</div><div><b>{save.name}</b><span>{formatSize(save.size)} · {new Date(save.modifiedAt).toLocaleString()}</span></div></> : <div className="empty">No _autosave1.zip main save yet</div>}</div>
     <button className="wide" disabled={busy || !save} onClick={onBackup}><Archive size={15} />Create consistent backup</button>
   </section>;
 }
