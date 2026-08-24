@@ -163,14 +163,25 @@ export async function buildApp(options: AppOptions) {
 
   app.get('/api/events', async (request, reply) => {
     reply.hijack();
-    reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-    const send = (event: string, data: unknown) => reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    reply.raw.flushHeaders();
+    let closed = false;
+    const send = (event: string, data: unknown) => !closed && reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     const onOperation = (snapshot: unknown) => send('operation', snapshot);
     operations.on('change', onOperation);
+    send('connected', { connectedAt: new Date().toISOString() });
     for (const line of await options.adapter.recentLogs(500).catch(() => [])) send('log', { line });
     const controller = new AbortController();
+    const heartbeat = setInterval(() => { if (!closed) reply.raw.write(': keepalive\n\n'); }, 15_000);
+    request.log.info('log event stream connected');
     void options.adapter.followLogs(line => send('log', { line: redact(line) }), controller.signal).catch(error => send('error', { error: redact(error) }));
-    request.raw.on('close', () => { operations.off('change', onOperation); controller.abort(); });
+    request.raw.once('close', () => {
+      closed = true;
+      clearInterval(heartbeat);
+      operations.off('change', onOperation);
+      controller.abort();
+      request.log.info('log event stream disconnected');
+    });
   });
 
   if (options.serveFrontend) {

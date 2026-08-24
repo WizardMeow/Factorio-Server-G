@@ -1,5 +1,9 @@
 .logs-panel { min-height:485px; overflow:hidden; }
 .log-tools { display:flex; gap:6px; align-items:center; }
+.stream-state { display:flex; align-items:center; gap:6px; margin-right:3px; color:#77817b; font:8px ui-monospace,monospace; letter-spacing:.12em; text-transform:uppercase; }
+.stream-state i { width:6px; height:6px; border-radius:50%; background:#777; }
+.stream-state.live i { background:var(--green); box-shadow:0 0 8px var(--green); }
+.stream-state.retrying i { background:#facc15; }
 .log-tools label { width:190px; height:34px; padding:0 9px; display:flex; align-items:center; border:1px solid #303633; border-radius:6px; background:#0b0e0d; color:#59625d; }
 .log-tools input { width:100%; padding-left:7px; border:0; outline:0; background:transparent; color:#ccd3cf; font:11px ui-monospace,monospace; }
 .terminal { height:418px; padding:14px 0 18px; overflow:auto; background:#090c0b; color:#a8b1ac; font:11px/1.75 ui-monospace,SFMono-Regular,monospace; }

@@ -2,7 +2,7 @@ import { Pause, Play, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanelHeader } from './PanelHeader';
 
-export function LogPanel({ logs, onClear }: { logs: string[]; onClear(): void }) {
+export function LogPanel({ logs, stream, onClear }: { logs: string[]; stream: 'connecting' | 'live' | 'retrying'; onClear(): void }) {
   const [filter, setFilter] = useState('');
   const [following, setFollowing] = useState(true);
   const end = useRef<HTMLDivElement>(null);
@@ -13,6 +13,7 @@ export function LogPanel({ logs, onClear }: { logs: string[]; onClear(): void })
   return <section className="panel logs-panel">
     <PanelHeader eyebrow="LIVE OUTPUT" title="Docker Logs">
       <div className="log-tools">
+        <span className={`stream-state ${stream}`}><i />{stream}</span>
         <label><Search size={14} /><input aria-label="过滤日志" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter logs…" /></label>
         <button className="icon" aria-label={following ? '暂停日志跟随' : '恢复日志跟随'} onClick={() => setFollowing(value => !value)}>{following ? <Pause size={15} /> : <Play size={15} />}</button>
         <button className="ghost" onClick={onClear}>Clear</button>

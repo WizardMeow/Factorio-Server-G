@@ -7,16 +7,20 @@ const EMPTY: Overview = { server: { status: 'stopped', running: false }, operati
 
 export function useServerDashboard() {
   const [overview, setOverview] = useState(EMPTY);
+  const [loaded, setLoaded] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
+  const [logStream, setLogStream] = useState<'connecting' | 'live' | 'retrying'>('connecting');
 
   const refresh = useCallback(async () => {
-    try { setOverview(await request<Overview>('/api/overview')); }
+    try { setOverview(await request<Overview>('/api/overview')); setLoaded(true); }
     catch (error) { toast.error(String(error)); }
   }, []);
 
   useEffect(() => {
     void refresh();
     const source = new EventSource('/api/events');
+    source.addEventListener('open', () => setLogStream('live'));
+    source.addEventListener('error', () => setLogStream('retrying'));
     source.addEventListener('log', event => { const value = JSON.parse((event as MessageEvent).data) as { line: string }; setLogs(lines => [...lines.slice(-1999), value.line]); });
     source.addEventListener('operation', event => { const operations = JSON.parse((event as MessageEvent).data) as Overview['operations']; setOverview(value => ({ ...value, operations })); if (!operations.active) void refresh(); });
     return () => source.close();
@@ -37,5 +41,5 @@ export function useServerDashboard() {
     } catch (error) { toast.error(String(error)); }
   }
 
-  return { overview, logs, clearLogs: () => setLogs([]), mutate, upload };
+  return { overview, loaded, logs, logStream, clearLogs: () => setLogs([]), mutate, upload };
 }

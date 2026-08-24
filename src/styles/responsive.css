@@ -18,4 +18,7 @@
   .log-tools label { display:none; }
   .server-title h2 { font-size:22px; }
   .resolved { grid-template-columns:1fr; }
+  .tab-list { width:100%; }
+  .tab-trigger { min-width:0; flex:1; }
+  .stream-state { display:none; }
 }
