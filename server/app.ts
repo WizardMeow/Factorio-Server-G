@@ -279,7 +279,7 @@ export async function buildApp(options: AppOptions) {
     send('connected', { connectedAt: new Date().toISOString() });
     const recentLogs = await options.adapter.recentLogs(500).catch(() => []);
     for (const line of options.adapter.recentManagementLogs?.() ?? []) send('log', { source: 'container', line });
-    for (const line of recentLogs) send('log', classifyContainerLog(line));
+    for (const line of recentLogs) send('log', classifyContainerLog(redact(line)));
     send('history-complete', { count: recentLogs.length });
     const controller = new AbortController();
     const stopManagementLogs = options.adapter.onManagementLog?.(line => send('log', { source: 'container', line }));
