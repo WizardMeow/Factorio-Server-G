@@ -25,6 +25,7 @@
     "react-dom": "latest",
     "sonner": "latest",
     "tailwind-merge": "latest",
+    "undici": "latest",
     "zod": "latest"
   },
   "devDependencies": {

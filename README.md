@@ -21,6 +21,8 @@ docker compose up -d webui
 
 启动前把 `.env` 的 `HOST_PROJECT_ROOT` 改成仓库在 Docker 宿主机上的绝对路径。这让 WebUI 容器内发起的 Compose 操作仍能建立正确的宿主机 bind mount。
 
+如果宿主机设置了 `http_proxy`、`https_proxy` 和 `no_proxy`，Compose 会把它们传给镜像构建和 WebUI 的 Mod Portal HTTP 客户端；无需把代理地址写进仓库。
+
 打开 `http://<tailscale-ip>:3000`。Factorio 不会在 WebUI 启动时自动启动；在导入 `save.zip` 后从控制台启动。
 
 所有存档、下载内容和操作状态都位于被 Git 忽略的 `runtime/`。发布配置位于 `config/`。

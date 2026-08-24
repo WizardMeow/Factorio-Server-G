@@ -2,7 +2,12 @@ name: factorio-server-g
 
 services:
   webui:
-    build: .
+    build:
+      context: .
+      args:
+        HTTP_PROXY: "${http_proxy:-}"
+        HTTPS_PROXY: "${https_proxy:-}"
+        NO_PROXY: "${no_proxy:-}"
     restart: unless-stopped
     ports:
       - "${WEBUI_PORT:-3000}:3000"
@@ -12,6 +17,9 @@ services:
       PROJECT_ROOT: /project
       FRONTEND_ROOT: /app/dist
       HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
+      HTTP_PROXY: "${http_proxy:-}"
+      HTTPS_PROXY: "${https_proxy:-}"
+      NO_PROXY: "${no_proxy:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}:/project"
