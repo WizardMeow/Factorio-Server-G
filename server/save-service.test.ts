@@ -5,24 +5,22 @@ import { tmpdir } from 'node:os';
 import { MAIN_SAVE_NAME, SaveService } from './save-service.js';
 
 describe('SaveService', () => {
-  test('protects the current main save before promoting an import', async () => {
+  test('materializes an import as a startup candidate without overwriting autosaves', async () => {
     const root = await mkdtemp(join(tmpdir(), 'factorio-saves-'));
     const saves = new SaveService(root);
     await saves.initialize();
     await writeFile(join(saves.savesDir, MAIN_SAVE_NAME), 'old world');
     await writeFile(join(saves.importsDir, 'new.zip'), 'new world');
-    await saves.promote('imports', 'new.zip');
-    expect(await readFile(join(saves.savesDir, MAIN_SAVE_NAME), 'utf8')).toBe('new world');
-    const listing = await saves.list();
-    expect(listing.backups).toHaveLength(1);
-    expect(await readFile(join(saves.backupsDir, listing.backups[0].name), 'utf8')).toBe('old world');
+    expect(await saves.materialize('imports', 'new.zip')).toBe('_webui-selected.zip');
+    expect(await readFile(join(saves.savesDir, MAIN_SAVE_NAME), 'utf8')).toBe('old world');
+    expect(await readFile(join(saves.savesDir, '_webui-selected.zip'), 'utf8')).toBe('new world');
   });
 
   test('rejects path traversal save names', async () => {
     const root = await mkdtemp(join(tmpdir(), 'factorio-saves-'));
     const saves = new SaveService(root);
     await saves.initialize();
-    await expect(saves.promote('imports', '../save.zip')).rejects.toThrow('Invalid save name');
+    await expect(saves.materialize('imports', '../save.zip')).rejects.toThrow('Invalid save name');
   });
 
   test('lists _autosave1 as both the loaded save and a rotating autosave slot', async () => {

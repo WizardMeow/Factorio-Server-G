@@ -1,18 +1,19 @@
 import * as Tabs from '@radix-ui/react-tabs';
 import { Activity, Archive, LockKeyhole, SlidersHorizontal } from 'lucide-react';
-import type { Overview } from '../api';
+import type { LogEntry, Overview } from '../api';
 import { LogPanel } from './LogPanel';
 import { ModPlanner } from './ModPlanner';
 import { MainSaveCard, SaveManager } from './SavePanels';
 import { ServerHero } from './ServerHero';
 import { VersionCard } from './VersionCard';
+import { ProfileSwitcher } from './ProfileSwitcher';
 
 interface Props {
   overview: Overview;
-  logs: string[];
+  logs: LogEntry[];
   logStream: 'connecting' | 'live' | 'retrying';
   logHistoryLoaded: boolean;
-  clearLogs(): void;
+  clearLogs(source: LogEntry['source']): void;
   mutate(path: string, body?: unknown, method?: string): Promise<void>;
   upload(file?: File): Promise<void>;
 }
@@ -29,21 +30,25 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
     <Tabs.Content className="tab-content" value="configure">
       {overview.server.running && <div className="configuration-lock"><LockKeyhole size={17} /><span><b>服务器运行中，配置已锁定</b>停止服务器后可修改游戏版本与模组。</span></div>}
       <div className="configuration-grid">
-        <VersionCard current={overview.config.version} busy={busy} running={overview.server.running} onApply={version => mutate('/api/config/version', { version }, 'PUT')} />
+        <ProfileSwitcher profiles={overview.profiles} disabled={busy || overview.server.running} onAction={mutate} />
+        <VersionCard current={overview.config.version} channel={overview.config.channel} busy={busy} running={overview.server.running} onApply={(version, channel) => mutate('/api/config/version', { version, channel }, 'PUT')} />
         <ModPlanner mods={overview.mods} busy={busy} running={overview.server.running} onApply={planId => mutate('/api/mods/apply', { planId })} />
       </div>
     </Tabs.Content>
 
     <Tabs.Content className="tab-content" value="saves">
       <div className="save-workspace">
-        <MainSaveCard save={overview.saves.main} busy={busy} onBackup={() => mutate('/api/saves/backup')} />
+        <MainSaveCard save={overview.saves.main} />
         <SaveManager saves={overview.saves} busy={busy} running={overview.server.running} onAction={mutate} onUpload={upload} />
       </div>
     </Tabs.Content>
 
     <Tabs.Content className="tab-content" value="observe">
       <ServerHero overview={overview} busy={busy} onAction={mutate} />
-      <div className="observe-logs"><LogPanel logs={logs} stream={logStream} historyLoaded={logHistoryLoaded} onClear={clearLogs} /></div>
+      <div className="log-windows">
+        <LogPanel eyebrow="FACTORIO OUTPUT" title="Game Logs" logs={logs.filter(entry => entry.source === 'game').map(entry => entry.line)} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('game')} />
+        <LogPanel eyebrow="DOCKER OUTPUT" title="Container Logs" logs={logs.filter(entry => entry.source === 'container').map(entry => entry.line)} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('container')} />
+      </div>
     </Tabs.Content>
   </Tabs.Root>;
 }

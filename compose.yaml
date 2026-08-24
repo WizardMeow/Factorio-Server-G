@@ -14,6 +14,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      FACTORIO_PORT: "${FACTORIO_PORT:-34197}"
       PROJECT_ROOT: /project
       FRONTEND_ROOT: /app/dist
       HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
@@ -26,7 +27,7 @@ services:
     working_dir: /app
 
   factorio:
-    image: "factoriotools/factorio:${FACTORIO_VERSION:-latest}"
+    image: "factoriotools/factorio:${FACTORIO_VERSION:-2.0.77}"
     restart: "no"
     stop_grace_period: 2m
     ports:
@@ -35,10 +36,10 @@ services:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
       LOAD_LATEST_SAVE: "false"
-      SAVE_NAME: _autosave1
+      SAVE_NAME: "${FACTORIO_SAVE_NAME:-_autosave1}"
       GENERATE_NEW_SAVE: "false"
       UPDATE_MODS_ON_START: "false"
       USERNAME: "${FACTORIO_USERNAME:-}"
       TOKEN: "${FACTORIO_TOKEN:-}"
     volumes:
-      - "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime/factorio:/factorio"
+      - "${FACTORIO_DATA_PATH:-${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}/runtime/factorio}:/factorio"

@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import type { Overview } from '../api';
-import { request } from '../api';
+import type { LogEntry, Overview } from '../api';
+import { overviewSchema, request, saveImportResultSchema } from '../api';
 
-const EMPTY: Overview = { server: { status: 'stopped', running: false }, operations: { history: [] }, saves: { main: null, autosaves: [], imports: [], backups: [] }, mods: { roots: [], installed: [] }, config: { version: 'latest' }, settings: null };
+const EMPTY: Overview = { server: { status: 'stopped', running: false }, operations: { history: [] }, saves: { main: null, autosaves: [], imports: [], backups: [], nextLaunch: { kind: 'autosaves', name: '_autosave1.zip' } }, mods: { roots: [], installed: [] }, profiles: { activeId: 'default', items: [{ id: 'default', name: 'Default' }] }, connection: { address: 'loading…' }, config: { version: '2.0.77', channel: 'stable' }, settings: null };
 
 export function useServerDashboard() {
   const [overview, setOverview] = useState(EMPTY);
   const [loaded, setLoaded] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logStream, setLogStream] = useState<'connecting' | 'live' | 'retrying'>('connecting');
   const [logHistoryLoaded, setLogHistoryLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
-    try { setOverview(await request<Overview>('/api/overview')); setLoaded(true); }
+    try { setOverview(await request<Overview>('/api/overview', undefined, overviewSchema)); setLoaded(true); }
     catch (error) { toast.error(String(error)); }
   }, []);
 
@@ -23,7 +23,7 @@ export function useServerDashboard() {
     source.addEventListener('open', () => setLogStream('live'));
     source.addEventListener('error', () => setLogStream('retrying'));
     source.addEventListener('history-complete', () => setLogHistoryLoaded(true));
-    source.addEventListener('log', event => { const value = JSON.parse((event as MessageEvent).data) as { line: string }; setLogs(lines => [...lines.slice(-1999), value.line]); });
+    source.addEventListener('log', event => { const value = JSON.parse((event as MessageEvent).data) as LogEntry; setLogs(lines => [...lines.slice(-1999), value]); });
     source.addEventListener('operation', event => { const operations = JSON.parse((event as MessageEvent).data) as Overview['operations']; setOverview(value => ({ ...value, operations })); if (!operations.active) void refresh(); });
     return () => source.close();
   }, [refresh]);
@@ -38,10 +38,12 @@ export function useServerDashboard() {
     const form = new FormData(); form.append('file', file);
     try {
       const response = await fetch('/api/saves/import', { method: 'POST', body: form });
-      if (!response.ok) throw new Error((await response.json()).error);
-      await refresh(); toast.success('存档已导入');
+      const payload: unknown = await response.json();
+      if (!response.ok) throw new Error(typeof payload === 'object' && payload && 'error' in payload ? String(payload.error) : response.statusText);
+      const imported = saveImportResultSchema.parse(payload);
+      await refresh(); toast.warning(`已导入 ${imported.name}，下次启动将使用 ${imported.factorioVersion} 与 ${imported.mods.length} 个 Mod。${imported.warning}`, { duration: 10_000 });
     } catch (error) { toast.error(String(error)); }
   }
 
-  return { overview, loaded, logs, logStream, logHistoryLoaded, clearLogs: () => setLogs([]), mutate, upload };
+  return { overview, loaded, logs, logStream, logHistoryLoaded, clearLogs: (source: LogEntry['source']) => setLogs(values => values.filter(value => value.source !== source)), mutate, upload };
 }

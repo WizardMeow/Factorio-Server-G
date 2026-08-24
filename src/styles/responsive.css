@@ -10,6 +10,7 @@
   .mod-root input { grid-column:1/-1; grid-row:2; }
   .resolved { grid-template-columns:1fr 1fr; }
   .save-workspace { grid-template-columns:1fr; }
+  .log-windows { grid-template-columns:1fr; }
 }
 @media (max-width:560px) {
   .app-header { padding:0 15px; }

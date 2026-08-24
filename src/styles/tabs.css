@@ -9,7 +9,7 @@
 .tab-content { outline:none; }
 .configuration-grid { display:grid; gap:16px; }
 .save-workspace { display:grid; grid-template-columns:310px minmax(0,1fr); gap:16px; align-items:start; }
-.observe-logs { margin-top:16px; }
+.log-windows { margin-top:16px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .configuration-lock { margin-bottom:16px; padding:13px 16px; display:flex; align-items:center; gap:12px; border:1px solid #49361f; border-radius:8px; background:#24190f; color:#bd9b78; font-size:11px; }
 .configuration-lock svg { flex:none; color:var(--orange); }
 .configuration-lock span { display:grid; gap:3px; }

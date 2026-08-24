@@ -1,12 +1,12 @@
-import { Box } from 'lucide-react';
+import { Box, Copy } from 'lucide-react';
 
-export function AppHeader() {
+export function AppHeader({ address }: { address: string }) {
   return <header className="app-header">
       <div className="brand">
         <span className="mark"><Box size={20} /></span>
         <div><h1>Factorio Server G</h1><p>PYMOD OPERATIONS CONSOLE</p></div>
       </div>
-      <div className="connection"><span className="pulse" />TAILSCALE CONNECTED</div>
+      <button className="connection" title="复制 Factorio 联机地址" onClick={() => void navigator.clipboard.writeText(address)}><Copy size={14} />JOIN {address}</button>
   </header>;
 }
 

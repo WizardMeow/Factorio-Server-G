@@ -3,19 +3,28 @@ import { z } from 'zod';
 export const saveEntrySchema = z.object({ name: z.string(), size: z.number(), modifiedAt: z.string() });
 export const configuredModSchema = z.object({ name: z.string(), version: z.string().optional(), enabled: z.boolean() });
 export const installedModSchema = z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), enabled: z.boolean() });
+export const logEntrySchema = z.object({ source: z.enum(['game', 'container']), line: z.string() });
+export const saveCollectionSchema = z.enum(['autosaves', 'imports', 'backups']);
+export const nextLaunchSaveSchema = z.object({ kind: saveCollectionSchema, name: z.string() });
 export const operationSchema = z.object({ id: z.string(), kind: z.string(), stage: z.string(), result: z.string().optional(), error: z.string().optional(), startedAt: z.string(), updatedAt: z.string().optional(), finishedAt: z.string().optional() });
 export const overviewSchema = z.object({
   server: z.object({ status: z.string(), running: z.boolean(), image: z.string().optional(), error: z.string().optional(), health: z.string().optional() }),
   operations: z.object({ active: operationSchema.optional(), history: z.array(operationSchema) }),
-  saves: z.object({ main: saveEntrySchema.nullable(), autosaves: z.array(saveEntrySchema), imports: z.array(saveEntrySchema), backups: z.array(saveEntrySchema) }),
+  saves: z.object({ main: saveEntrySchema.nullable(), autosaves: z.array(saveEntrySchema), imports: z.array(saveEntrySchema), backups: z.array(saveEntrySchema), nextLaunch: nextLaunchSaveSchema }),
   mods: z.object({ roots: z.array(configuredModSchema), installed: z.array(installedModSchema) }),
-  config: z.object({ version: z.string() }), settings: z.record(z.string(), z.unknown()).nullable(), modRollbackAvailable: z.boolean().optional(),
+  profiles: z.object({ activeId: z.string(), items: z.array(z.object({ id: z.string(), name: z.string() })) }),
+  connection: z.object({ address: z.string() }),
+  config: z.object({ version: z.string(), channel: z.enum(['latest', 'stable']).optional() }), settings: z.record(z.string(), z.unknown()).nullable(), modRollbackAvailable: z.boolean().optional(),
 });
 export const dependencySchema = z.object({ kind: z.enum(['required', 'optional', 'hidden-optional', 'incompatible']), name: z.string(), operator: z.string().optional(), version: z.string().optional(), raw: z.string() });
 export const modPlanSchema = z.object({ id: z.string(), factorioVersion: z.string(), createdAt: z.string(), roots: z.array(configuredModSchema), selections: z.array(z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), release: z.unknown() })), optional: z.array(z.object({ from: z.string(), dependency: dependencySchema })) });
 export const serverActionParamsSchema = z.object({ action: z.enum(['start', 'stop', 'restart']) });
-export const versionBodySchema = z.object({ version: z.string().regex(/^(latest|stable|\d+\.\d+(?:\.\d+)?)$/) });
-export const savePromoteBodySchema = z.object({ kind: z.enum(['imports', 'backups']), name: z.string().endsWith('.zip') });
+export const exactVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
+export const versionBodySchema = z.object({ version: exactVersionSchema, channel: z.enum(['latest', 'stable']).optional() });
+export const versionOptionsSchema = z.object({ latest: exactVersionSchema, stable: exactVersionSchema });
+export const saveNextLaunchBodySchema = z.object({ kind: saveCollectionSchema, name: z.string().endsWith('.zip') });
+export const saveBackupBodySchema = z.object({ kind: saveCollectionSchema, name: z.string().endsWith('.zip') });
+export const saveDeleteBodySchema = z.object({ kind: z.enum(['imports', 'backups']), name: z.string().endsWith('.zip') });
 export const modPlanBodySchema = z.object({ input: z.string().min(1), version: z.string().optional(), optional: z.array(z.string()).optional() });
 export const modChangePlanBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('update'), name: z.string().min(1), version: z.string().optional() }),
@@ -23,6 +32,9 @@ export const modChangePlanBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('set-enabled'), name: z.string().min(1), enabled: z.boolean() }),
 ]);
 export const modApplyBodySchema = z.object({ planId: z.string().uuid() });
+export const profileCreateBodySchema = z.object({ name: z.string().trim().min(1).max(64) });
+export const profileActivateBodySchema = z.object({ id: z.string().min(1) });
+export const saveImportResultSchema = z.object({ name: z.string(), factorioVersion: exactVersionSchema, mods: z.array(z.object({ name: z.string(), version: z.string() })), warning: z.string() });
 
 export type SaveEntryDto = z.infer<typeof saveEntrySchema>;
 export type OperationDto = z.infer<typeof operationSchema>;
@@ -30,3 +42,6 @@ export type OverviewDto = z.infer<typeof overviewSchema>;
 export type ModPlanDto = z.infer<typeof modPlanSchema>;
 export type ConfiguredModDto = z.infer<typeof configuredModSchema>;
 export type InstalledModDto = z.infer<typeof installedModSchema>;
+export type LogEntryDto = z.infer<typeof logEntrySchema>;
+export type VersionOptionsDto = z.infer<typeof versionOptionsSchema>;
+export type SaveImportResultDto = z.infer<typeof saveImportResultSchema>;

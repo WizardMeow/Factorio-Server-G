@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 export interface SaveEntry { name: string; size: number; modifiedAt: string }
@@ -17,18 +17,28 @@ export class SaveService {
   async list() {
     return { main: await this.info(join(this.savesDir, MAIN_SAVE_NAME)), autosaves: await this.entries(this.savesDir, /^_autosave.*\.zip$/), imports: await this.entries(this.importsDir), backups: await this.entries(this.backupsDir) };
   }
-  async backup(prefix = 'manual') {
+  async backup(sourceName = MAIN_SAVE_NAME, prefix = 'manual') {
+    this.validateName(sourceName);
     const name = `${prefix}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-    await copyFile(join(this.savesDir, MAIN_SAVE_NAME), join(this.backupsDir, name));
+    await copyFile(join(this.savesDir, sourceName), join(this.backupsDir, name));
     return name;
   }
-  async promote(kind: 'imports' | 'backups', name: string) {
+  async backupEntry(kind: 'autosaves' | 'imports' | 'backups', name: string) {
     this.validateName(name);
-    const current = await this.info(join(this.savesDir, MAIN_SAVE_NAME));
-    if (current) await this.backup('protected');
-    await copyFile(join(kind === 'imports' ? this.importsDir : this.backupsDir, name), join(this.savesDir, MAIN_SAVE_NAME));
+    const backupName = `backup-${kind}-${name.replace(/\.zip$/, '')}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+    await copyFile(this.pathFor(kind, name), join(this.backupsDir, backupName));
+    return backupName;
+  }
+  async deleteEntry(kind: 'imports' | 'backups', name: string) { this.validateName(name); await rm(this.pathFor(kind, name)); }
+  async materialize(kind: 'autosaves' | 'imports' | 'backups', name: string) {
+    this.validateName(name);
+    if (kind === 'autosaves') return name;
+    const target = '_webui-selected.zip';
+    await copyFile(join(kind === 'imports' ? this.importsDir : this.backupsDir, name), join(this.savesDir, target));
+    return target;
   }
   private validateName(name: string) { if (basename(name) !== name || !name.endsWith('.zip')) throw new Error('Invalid save name'); }
+  private pathFor(kind: 'autosaves' | 'imports' | 'backups', name: string) { return join(kind === 'autosaves' ? this.savesDir : kind === 'imports' ? this.importsDir : this.backupsDir, name); }
   private async entries(dir: string, pattern = /\.zip$/): Promise<SaveEntry[]> {
     const entries = await Promise.all((await readdir(dir)).filter(name => pattern.test(name)).map(name => this.info(join(dir, name))));
     return entries.filter((entry): entry is SaveEntry => Boolean(entry)).sort((left, right) => Date.parse(right.modifiedAt) - Date.parse(left.modifiedAt) || left.name.localeCompare(right.name));

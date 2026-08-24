@@ -8,20 +8,24 @@ import { redact } from './redact.js';
 export class ComposeCommandError extends Error {}
 
 export class DockerComposeAdapter implements ComposeAdapter {
+  private readonly managementHistory: string[] = [];
+  private readonly managementListeners = new Set<(line: string) => void>();
   constructor(private readonly cwd: string, private readonly service = 'factorio', private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}) {}
 
   private run(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
       void this.environment().then(env => {
       const startedAt = Date.now();
+      const management = !['ps', 'logs'].includes(args[0] ?? '');
       this.log({ service: this.service, composeArgs: args }, 'docker compose command started');
+      if (management) this.emitManagement(`docker compose ${args.join(' ')} started`);
       const child = spawn('docker', ['compose', ...args], { cwd: this.cwd, env });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', chunk => { stdout += chunk; });
       child.stderr.on('data', chunk => { stderr += chunk; });
-      child.once('error', error => { const sanitized = redact(error); this.log({ service: this.service, composeArgs: args, error: sanitized }, 'docker compose command failed'); reject(new ComposeCommandError(sanitized)); });
-      child.once('close', code => { this.log({ service: this.service, composeArgs: args, exitCode: code, durationMs: Date.now() - startedAt }, code === 0 ? 'docker compose command completed' : 'docker compose command failed'); code === 0
+      child.once('error', error => { const sanitized = redact(error); this.log({ service: this.service, composeArgs: args, error: sanitized }, 'docker compose command failed'); if (management) this.emitManagement(`docker compose ${args.join(' ')} failed: ${sanitized}`); reject(new ComposeCommandError(sanitized)); });
+      child.once('close', code => { const durationMs = Date.now() - startedAt; this.log({ service: this.service, composeArgs: args, exitCode: code, durationMs }, code === 0 ? 'docker compose command completed' : 'docker compose command failed'); if (management) this.emitManagement(`docker compose ${args.join(' ')} ${code === 0 ? 'completed' : `failed (${code})`} in ${durationMs}ms`); code === 0
         ? resolve(stdout.trim())
         : reject(new ComposeCommandError(redact(stderr || `docker compose exited ${code}`))); });
       }).catch(reject);
@@ -30,9 +34,15 @@ export class DockerComposeAdapter implements ComposeAdapter {
 
   private async environment() {
     try {
-      const config = JSON.parse(await readFile(join(this.cwd, 'config', 'factorio.json'), 'utf8')) as { version?: string };
-      return { ...process.env, FACTORIO_VERSION: config.version || 'latest' };
-    } catch { return { ...process.env, FACTORIO_VERSION: 'latest' }; }
+      const active = await readFile(join(this.cwd, 'runtime', 'webui', 'profile.json'), 'utf8').then(value => JSON.parse(value) as { activeId?: string }).catch((): { activeId?: string } => ({}));
+      const profileId = active.activeId || 'default';
+      const profileRuntime = profileId === 'default' ? join(this.cwd, 'runtime') : join(this.cwd, 'runtime', 'profiles', profileId);
+      const config = JSON.parse(await readFile(join(this.cwd, 'config', 'profiles', profileId, 'factorio.json'), 'utf8')) as { version?: string };
+      const launch: { saveName?: string } = await readFile(join(profileRuntime, 'webui', 'launch.json'), 'utf8').then(value => JSON.parse(value) as { saveName?: string }).catch(() => ({}));
+      const hostRoot = process.env.HOST_PROJECT_ROOT || this.cwd;
+      const dataPath = profileId === 'default' ? join(hostRoot, 'runtime', 'factorio') : join(hostRoot, 'runtime', 'profiles', profileId, 'factorio');
+      return { ...process.env, FACTORIO_VERSION: config.version || '2.0.77', FACTORIO_SAVE_NAME: (launch.saveName || '_autosave1.zip').replace(/\.zip$/, ''), FACTORIO_DATA_PATH: dataPath };
+    } catch { return { ...process.env, FACTORIO_VERSION: '2.0.77', FACTORIO_SAVE_NAME: '_autosave1', FACTORIO_DATA_PATH: join(process.env.HOST_PROJECT_ROOT || this.cwd, 'runtime', 'factorio') }; }
   }
 
   async inspect(): Promise<ContainerState> {
@@ -70,5 +80,14 @@ export class DockerComposeAdapter implements ComposeAdapter {
       child.once('error', reject);
       child.once('close', code => code === 0 || signal.aborted ? resolve() : reject(new Error(`log follower exited ${code}`)));
     });
+  }
+
+  recentManagementLogs() { return [...this.managementHistory]; }
+  onManagementLog(listener: (line: string) => void) { this.managementListeners.add(listener); return () => this.managementListeners.delete(listener); }
+  private emitManagement(message: string) {
+    const line = `[compose] ${new Date().toISOString()} ${message}`;
+    this.managementHistory.push(line);
+    if (this.managementHistory.length > 500) this.managementHistory.shift();
+    for (const listener of this.managementListeners) listener(line);
   }
 }

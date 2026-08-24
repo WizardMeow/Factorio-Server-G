@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildApp } from './app.js';
 import { FakeAdapter } from './test/fake-adapter.js';
+import { zipSync } from 'fflate';
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())); });
@@ -13,7 +14,8 @@ describe('core HTTP flows', () => {
     const { app, adapter } = await fixture();
     const response = await app.inject({ method: 'POST', url: '/api/server/start' });
     expect(response.statusCode).toBe(202);
-    await waitFor(() => adapter.calls.includes('start'));
+    await waitFor(() => adapter.calls.includes('recreate'));
+    expect(adapter.calls.slice(0, 2)).toEqual(['pull', 'recreate']);
     const overview = await app.inject({ method: 'GET', url: '/api/overview' });
     expect(overview.statusCode).toBe(200);
     expect(overview.json().server.status).toBe('ready');
@@ -22,16 +24,16 @@ describe('core HTTP flows', () => {
   test('requires a stopped server for version changes', async () => {
     const { app, adapter } = await fixture();
     adapter.state = { status: 'ready', running: true };
-    const response = await app.inject({ method: 'PUT', url: '/api/config/version', payload: { version: 'stable' } });
+    const response = await app.inject({ method: 'PUT', url: '/api/config/version', payload: { version: '2.0.77', channel: 'stable' } });
     expect(response.statusCode).toBe(409);
     expect(adapter.calls).toEqual([]);
   });
 
-  test('stops, backs up, and restores prior running state', async () => {
+  test('backs up an individual autosave and restores prior running state', async () => {
     const { app, adapter, root } = await fixture();
     adapter.state = { status: 'ready', running: true };
     await writeFile(join(root, 'runtime/factorio/saves/_autosave1.zip'), 'world');
-    const response = await app.inject({ method: 'POST', url: '/api/saves/backup' });
+    const response = await app.inject({ method: 'POST', url: '/api/saves/backup-entry', payload: { kind: 'autosaves', name: '_autosave1.zip' } });
     expect(response.statusCode).toBe(202);
     await waitFor(() => adapter.calls.includes('start'));
     expect(adapter.calls).toEqual(['stop', 'start']);
@@ -39,8 +41,8 @@ describe('core HTTP flows', () => {
 
   test('lists configured mods and plans update, disable, and removal without mutating immediately', async () => {
     const { app, root } = await fixture();
-    await writeFile(join(root, 'config/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
-    await writeFile(join(root, 'config/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
+    await writeFile(join(root, 'config/profiles/default/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
+    await writeFile(join(root, 'config/profiles/default/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
     const overview = await app.inject({ method: 'GET', url: '/api/overview' });
     expect(overview.json().mods).toMatchObject({ roots: [{ name: 'demo', enabled: true }], installed: [{ name: 'demo', version: '1.0.0' }] });
 
@@ -52,12 +54,40 @@ describe('core HTTP flows', () => {
     const remove = await app.inject({ method: 'POST', url: '/api/mods/change-plan', payload: { action: 'remove', name: 'demo' } });
     expect(remove.json()).toMatchObject({ roots: [], selections: [] });
   });
+
+  test('selects an existing autosave for subsequent starts only while stopped', async () => {
+    const { app, adapter, root } = await fixture();
+    await writeFile(join(root, 'runtime/factorio/saves/_autosave2.zip'), 'world');
+    const selected = await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave2.zip' } });
+    expect(selected.statusCode).toBe(200);
+    expect(JSON.parse(await readFile(join(root, 'runtime/webui/launch.json'), 'utf8'))).toEqual({ kind: 'autosaves', name: '_autosave2.zip', saveName: '_autosave2.zip' });
+    adapter.state = { status: 'ready', running: true };
+    const rejected = await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave1.zip' } });
+    expect(rejected.statusCode).toBe(409);
+  });
+
+  test('one-click import stages exact save configuration without downloading', async () => {
+    const { app, adapter, root } = await fixture();
+    const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture() }));
+    const boundary = 'factorio-save-boundary';
+    const payload = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="world.zip"\r\nContent-Type: application/zip\r\n\r\n`),
+      archive,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const response = await app.inject({ method: 'POST', url: '/api/saves/import', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ name: 'world.zip', factorioVersion: '2.0.77', mods: [] });
+    expect(adapter.calls).toEqual([]);
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/default/factorio.json'), 'utf8'))).toEqual({ version: '2.0.77' });
+    expect(JSON.parse(await readFile(join(root, 'runtime/webui/launch.json'), 'utf8'))).toEqual({ kind: 'imports', name: 'world.zip', saveName: '_webui-selected.zip' });
+  });
 });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'factorio-app-'));
   await mkdir(join(root, 'config'), { recursive: true });
-  await writeFile(join(root, 'config/factorio.json'), JSON.stringify({ version: 'latest' }));
+  await writeFile(join(root, 'config/factorio.json'), JSON.stringify({ version: '2.0.77', channel: 'stable' }));
   await writeFile(join(root, 'config/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [] }));
   await writeFile(join(root, 'config/mods.lock.json'), JSON.stringify({ factorioVersion: '2.0', mods: [] }));
   await writeFile(join(root, 'config/server-settings.json'), JSON.stringify({ visibility: { public: false, lan: false } }));
@@ -67,3 +97,16 @@ async function fixture() {
   return { app, adapter, root };
 }
 async function waitFor(predicate: () => boolean) { for (let i = 0; i < 50; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('timeout'); }
+
+function levelInitFixture() {
+  const bytes: number[] = [];
+  const u8 = (value: number) => bytes.push(value);
+  const u16 = (value: number) => bytes.push(value & 255, value >> 8);
+  const u32 = (value: number) => bytes.push(value & 255, value >> 8 & 255, value >> 16 & 255, value >> 24 & 255);
+  const text = (value: string) => { const encoded = new TextEncoder().encode(value); u8(encoded.length); bytes.push(...encoded); };
+  u16(2); u16(0); u16(77); u16(0); u8(0);
+  text('freeplay'); text(''); text('base'); u8(0); u8(0); u8(0); text('');
+  u8(1); u8(0); u8(0); u8(0); u8(2); u8(0); u8(77); u32(1); u8(2); bytes.push(0, 0, 160, 0);
+  u8(1); text('base'); u8(2); u8(0); u8(77); u32(0);
+  return Uint8Array.from(bytes);
+}

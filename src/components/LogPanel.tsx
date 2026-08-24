@@ -2,7 +2,7 @@ import { Pause, Play, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanelHeader } from './PanelHeader';
 
-export function LogPanel({ logs, stream, historyLoaded, onClear }: { logs: string[]; stream: 'connecting' | 'live' | 'retrying'; historyLoaded: boolean; onClear(): void }) {
+export function LogPanel({ title, eyebrow, logs, stream, historyLoaded, onClear }: { title: string; eyebrow: string; logs: string[]; stream: 'connecting' | 'live' | 'retrying'; historyLoaded: boolean; onClear(): void }) {
   const [filter, setFilter] = useState('');
   const [following, setFollowing] = useState(true);
   const end = useRef<HTMLDivElement>(null);
@@ -15,7 +15,7 @@ export function LogPanel({ logs, stream, historyLoaded, onClear }: { logs: strin
   }, [logs, following, historyLoaded]);
 
   return <section className="panel logs-panel">
-    <PanelHeader eyebrow="LIVE OUTPUT" title="Docker Logs">
+    <PanelHeader eyebrow={eyebrow} title={title}>
       <div className="log-tools">
         <span className={`stream-state ${stream}`}><i />{stream}</span>
         <label><Search size={14} /><input aria-label="过滤日志" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter logs…" /></label>
@@ -24,7 +24,7 @@ export function LogPanel({ logs, stream, historyLoaded, onClear }: { logs: strin
       </div>
     </PanelHeader>
     <div className="terminal" onScroll={event => { const node = event.currentTarget; if (node.scrollHeight - node.scrollTop - node.clientHeight > 24) setFollowing(false); }}>
-      {visibleLogs.length ? visibleLogs.map((line, index) => <div key={`${index}-${line}`}><span>{String(index + 1).padStart(3, '0')}</span>{line}</div>) : <div className="empty-log">Waiting for Factorio output…</div>}
+      {visibleLogs.length ? visibleLogs.map((line, index) => <div key={`${index}-${line}`}><span>{String(index + 1).padStart(3, '0')}</span>{line}</div>) : <div className="empty-log">Waiting for {title.toLowerCase()}…</div>}
       <div ref={end} />
     </div>
   </section>;
