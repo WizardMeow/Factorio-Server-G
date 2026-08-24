@@ -1,0 +1,15 @@
+{
+  "name": "Factorio Server G",
+  "description": "Private Factorio server for Tailscale direct connections",
+  "tags": ["private", "modded"],
+  "max_players": 0,
+  "visibility": {
+    "public": false,
+    "lan": false
+  },
+  "username": "",
+  "password": "",
+  "token": "",
+  "game_password": "",
+  "require_user_verification": false
+}

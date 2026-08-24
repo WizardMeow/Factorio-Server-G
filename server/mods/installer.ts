@@ -8,7 +8,9 @@ export class ModInstaller {
   constructor(private readonly projectRoot: string, private readonly username?: string, private readonly token?: string, private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}) {}
 
   async apply(plan: ModPlan) {
-    if (!this.username || !this.token) throw new Error('FACTORIO_USERNAME and FACTORIO_TOKEN are required to download mods');
+    if (plan.selections.length > 0 && (!this.username || !this.token)) throw new Error('FACTORIO_USERNAME and FACTORIO_TOKEN are required to download mods');
+    const username = this.username ?? '';
+    const token = this.token ?? '';
     const generationId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
     const runtimeRoot = join(this.projectRoot, 'runtime');
     const generations = join(runtimeRoot, 'webui', 'mod-generations');
@@ -22,7 +24,7 @@ export class ModInstaller {
       for (const selection of plan.selections) {
         this.log({ planId: plan.id, generationId, modName: selection.name, modVersion: selection.version }, 'downloading mod archive');
         const url = new URL(selection.release.download_url, 'https://mods.factorio.com');
-        url.searchParams.set('username', this.username); url.searchParams.set('token', this.token);
+        url.searchParams.set('username', username); url.searchParams.set('token', token);
         const response = await fetch(url);
         if (!response.ok) throw new Error(`Download failed for ${selection.name} (${response.status})`);
         const bytes = Buffer.from(await response.arrayBuffer());

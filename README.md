@@ -32,16 +32,18 @@ docker compose up -d webui
 - 启动、优雅停止和重启 Factorio，所有变更操作共享一把锁
 - 拉取并重建指定的 `latest`、`stable` 或精确版本镜像
 - 首屏 500 行 Docker 日志与 SSE 实时跟随
-- 导入、备份、下载和恢复镜像固定加载的 `_autosave1.zip`；它同时保留在 autosave 轮转槽列表中
+- 独立存档管理页支持导入、备份、下载和恢复镜像固定加载的 `_autosave1.zip`；它同时保留在 autosave 轮转槽列表中
 - 存档、导入和备份按修改时间倒序展示，并显示完整修改时间与文件大小
 - 只读显示 `server-settings.json` 的非敏感字段
 - 操作流水持久化，重启后标记未完成操作为 interrupted
-- 输入官方 Mod Portal URL 或模组名并递归解析 required dependencies
+- 渲染已声明根模组与托管依赖；新增、指定版本更新、启用、禁用和删除均先解析完整依赖图，再确认原子应用
 - 显式展示 optional/hidden optional dependencies，完整图冲突检测与版本回溯
 - 凭据下载、SHA1 校验、generation 原子切换及显式回滚入口
 - Mod Portal 与 REST 外部类型均由 Zod schema 推导和运行时校验
 
 声明根模组保存在 `config/mods.json`，精确解析结果保存在 `config/mods.lock.json`。下载凭据只从 `.env` 读取，不写入配置、日志或操作流水。
+
+新运行目录会从 `config/server-settings.json` 初始化为非公开、非 LAN 广播模式，供 Tailscale 地址直连且不要求 Factorio Token。已有 `runtime/factorio/config/server-settings.json` 不会被覆盖。
 
 ## 日志追踪
 

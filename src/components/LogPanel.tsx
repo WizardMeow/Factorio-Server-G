@@ -2,13 +2,17 @@ import { Pause, Play, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanelHeader } from './PanelHeader';
 
-export function LogPanel({ logs, stream, onClear }: { logs: string[]; stream: 'connecting' | 'live' | 'retrying'; onClear(): void }) {
+export function LogPanel({ logs, stream, historyLoaded, onClear }: { logs: string[]; stream: 'connecting' | 'live' | 'retrying'; historyLoaded: boolean; onClear(): void }) {
   const [filter, setFilter] = useState('');
   const [following, setFollowing] = useState(true);
   const end = useRef<HTMLDivElement>(null);
+  const liveScrolling = useRef(false);
   const visibleLogs = useMemo(() => logs.filter(line => line.toLowerCase().includes(filter.toLowerCase())), [logs, filter]);
 
-  useEffect(() => { if (following) end.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, following]);
+  useEffect(() => {
+    if (following) end.current?.scrollIntoView({ behavior: liveScrolling.current ? 'smooth' : 'auto' });
+    if (historyLoaded) liveScrolling.current = true;
+  }, [logs, following, historyLoaded]);
 
   return <section className="panel logs-panel">
     <PanelHeader eyebrow="LIVE OUTPUT" title="Docker Logs">

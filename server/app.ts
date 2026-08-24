@@ -1,8 +1,8 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import staticPlugin from '@fastify/static';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
 import type { ComposeAdapter } from './types.js';
@@ -13,8 +13,8 @@ import { ModPortalClient, type ModMetadataProvider } from './mods/portal-client.
 import { ModResolver } from './mods/resolver.js';
 import { ModInstaller } from './mods/installer.js';
 import { normalizeModName } from './mods/versions.js';
-import type { ModPlan } from './mods/types.js';
-import { modApplyBodySchema, modPlanBodySchema, savePromoteBodySchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
+import type { ConfiguredMod, ModPlan } from './mods/types.js';
+import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, savePromoteBodySchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
 
 interface AppOptions { projectRoot: string; adapter: ComposeAdapter; serveFrontend?: boolean; modProvider?: ModMetadataProvider; modInstaller?: ModInstaller }
 
@@ -27,6 +27,7 @@ export async function buildApp(options: AppOptions) {
   const installer = options.modInstaller ?? new ModInstaller(options.projectRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info(fields, message));
   const plans = new Map<string, ModPlan>();
   let rollbackPath: string | null = await installer.findRollbackCandidate();
+  await ensureDefaultServerSettings(options.projectRoot, runtimeRoot);
   await Promise.all([operations.initialize(), saves.initialize()]);
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024, files: 1 } });
 
@@ -36,11 +37,15 @@ export async function buildApp(options: AppOptions) {
     reply.code(conflict ? 409 : 500).send({ error: redact(error) });
   });
 
-  app.get('/api/overview', async () => ({
-    server: await options.adapter.inspect(), operations: operations.snapshot,
-    saves: await saves.list(), config: await readConfig(options.projectRoot),
-    settings: await readSettings(runtimeRoot), modRollbackAvailable: Boolean(rollbackPath),
-  }));
+  app.get('/api/overview', async () => {
+    const [modConfig, modLock] = await Promise.all([readModConfig(options.projectRoot), readModLock(options.projectRoot)]);
+    return {
+      server: await options.adapter.inspect(), operations: operations.snapshot,
+      saves: await saves.list(), config: await readConfig(options.projectRoot),
+      mods: { roots: normalizeConfiguredMods(modConfig.mods), installed: modLock.mods.map(mod => ({ name: mod.name, version: mod.version, explicit: mod.explicit, enabled: mod.enabled ?? true })) },
+      settings: await readSettings(runtimeRoot), modRollbackAvailable: Boolean(rollbackPath),
+    };
+  });
   app.get('/api/operations', async () => operations.snapshot);
 
   app.post<{ Body: { input?: string; version?: string; optional?: string[] } }>('/api/mods/plan', async (request, reply) => {
@@ -49,11 +54,35 @@ export async function buildApp(options: AppOptions) {
     const input = parsed.data.input;
     const config = await readModConfig(options.projectRoot);
     const root = { name: normalizeModName(input), version: parsed.data.version || undefined };
-    const existing = config.mods.filter(item => item.name !== root.name);
+    const existing = normalizeConfiguredMods(config.mods).filter(item => item.name !== root.name);
     const optional = (parsed.data.optional ?? []).map(name => ({ name: normalizeModName(name) }));
-    const plan = await resolver.resolve(config.factorioVersion, [...existing, root, ...optional]);
+    const nextRoots: ConfiguredMod[] = [...existing, { ...root, enabled: true }];
+    const plan = await resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots, optional);
     plans.set(plan.id, plan);
     request.log.info({ planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod plan resolved');
+    return reply.send(plan);
+  });
+
+  app.post('/api/mods/change-plan', async (request, reply) => {
+    const parsed = modChangePlanBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid mod change' });
+    const config = await readModConfig(options.projectRoot);
+    const roots = normalizeConfiguredMods(config.mods);
+    const name = normalizeModName(parsed.data.name);
+    const existing = roots.find(root => root.name === name);
+    if (!existing) return reply.code(404).send({ error: `Configured mod not found: ${name}` });
+    let nextRoots: ConfiguredMod[];
+    if (parsed.data.action === 'remove') nextRoots = roots.filter(root => root.name !== name);
+    else if (parsed.data.action === 'update') {
+      const version = parsed.data.version || undefined;
+      nextRoots = roots.map(root => root.name === name ? { ...root, version } : root);
+    } else {
+      const enabled = parsed.data.enabled;
+      nextRoots = roots.map(root => root.name === name ? { ...root, enabled } : root);
+    }
+    const plan = await resolveConfiguredPlan(resolver, config.factorioVersion, nextRoots);
+    plans.set(plan.id, plan);
+    request.log.info({ planId: plan.id, action: parsed.data.action, modName: name, resolvedCount: plan.selections.length }, 'mod change plan resolved');
     return reply.send(plan);
   });
 
@@ -171,6 +200,7 @@ export async function buildApp(options: AppOptions) {
     operations.on('change', onOperation);
     send('connected', { connectedAt: new Date().toISOString() });
     for (const line of await options.adapter.recentLogs(500).catch(() => [])) send('log', { line });
+    send('history-complete', { count: 500 });
     const controller = new AbortController();
     const heartbeat = setInterval(() => { if (!closed) reply.raw.write(': keepalive\n\n'); }, 15_000);
     request.log.info('log event stream connected');
@@ -205,7 +235,11 @@ async function readConfig(root: string) {
   return JSON.parse(await readFile(join(root, 'config', 'factorio.json'), 'utf8')) as { version: string };
 }
 async function readModConfig(root: string) {
-  return JSON.parse(await readFile(join(root, 'config', 'mods.json'), 'utf8')) as { factorioVersion: string; mods: Array<{ name: string; version?: string }> };
+  return JSON.parse(await readFile(join(root, 'config', 'mods.json'), 'utf8')) as { factorioVersion: string; mods: Array<{ name: string; version?: string; enabled?: boolean }> };
+}
+async function readModLock(root: string) {
+  try { return JSON.parse(await readFile(join(root, 'config', 'mods.lock.json'), 'utf8')) as { mods: Array<{ name: string; version: string; explicit: boolean; enabled?: boolean }> }; }
+  catch { return { mods: [] }; }
 }
 async function readSettings(runtimeRoot: string) {
   try {
@@ -214,3 +248,21 @@ async function readSettings(runtimeRoot: string) {
   } catch { return null; }
 }
 async function writeJsonAtomic(path: string, value: unknown) { await mkdir(resolve(path, '..'), { recursive: true }); const temp = `${path}.tmp`; await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`); await rename(temp, path); }
+
+async function ensureDefaultServerSettings(projectRoot: string, runtimeRoot: string) {
+  const destination = join(runtimeRoot, 'factorio', 'config', 'server-settings.json');
+  await mkdir(resolve(destination, '..'), { recursive: true });
+  try { await copyFile(join(projectRoot, 'config', 'server-settings.json'), destination, constants.COPYFILE_EXCL); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+}
+
+function normalizeConfiguredMods(mods: Array<{ name: string; version?: string; enabled?: boolean }>): ConfiguredMod[] {
+  return mods.map(mod => ({ name: mod.name, version: mod.version, enabled: mod.enabled ?? true }));
+}
+
+async function resolveConfiguredPlan(resolver: ModResolver, factorioVersion: string, roots: ConfiguredMod[], extra: Array<{ name: string; version?: string }> = []) {
+  const configured = [...roots, ...extra.filter(candidate => !roots.some(root => root.name === candidate.name)).map(root => ({ ...root, enabled: true }))];
+  const plan = await resolver.resolve(factorioVersion, configured.filter(root => root.enabled));
+  plan.roots = configured;
+  return plan;
+}

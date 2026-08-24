@@ -30,6 +30,15 @@ describe('ModInstaller', () => {
     await expect(new ModInstaller(root, 'user', 'secret').apply(fixturePlan('0'.repeat(40)))).rejects.toThrow('SHA1 mismatch');
     expect(await readFile(join(root, 'runtime/factorio/mods/old.zip'), 'utf8')).toBe('old');
   });
+
+  test('can remove every external mod without download credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'factorio-mods-'));
+    await mkdir(join(root, 'runtime/factorio/mods'), { recursive: true });
+    await writeFile(join(root, 'runtime/factorio/mods/old.zip'), 'old');
+    const plan = { ...fixturePlan('0'.repeat(40)), roots: [], selections: [] };
+    await new ModInstaller(root).apply(plan);
+    expect(JSON.parse(await readFile(join(root, 'runtime/factorio/mods/mod-list.json'), 'utf8'))).toEqual({ mods: [{ name: 'base', enabled: true }] });
+  });
 });
 
-function fixturePlan(sha1: string): ModPlan { return { id: '00000000-0000-4000-8000-000000000001', factorioVersion: '2.0', roots: [{ name: 'demo' }], optional: [], createdAt: '2026-01-01T00:00:00Z', selections: [{ name: 'demo', version: '1.0.0', explicit: true, release: { download_url: '/download/demo', file_name: 'demo_1.0.0.zip', released_at: '2026-01-01T00:00:00Z', version: '1.0.0', sha1, info_json: { factorio_version: '2.0' } } }] }; }
+function fixturePlan(sha1: string): ModPlan { return { id: '00000000-0000-4000-8000-000000000001', factorioVersion: '2.0', roots: [{ name: 'demo', enabled: true }], optional: [], createdAt: '2026-01-01T00:00:00Z', selections: [{ name: 'demo', version: '1.0.0', explicit: true, release: { download_url: '/download/demo', file_name: 'demo_1.0.0.zip', released_at: '2026-01-01T00:00:00Z', version: '1.0.0', sha1, info_json: { factorio_version: '2.0' } } }] }; }

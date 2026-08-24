@@ -3,10 +3,11 @@ export interface Dependency { kind: DependencyKind; name: string; operator?: str
 import type { PortalRelease } from './schemas.js';
 export type { PortalMod, PortalRelease } from './schemas.js';
 export interface ModSelection { name: string; version: string; explicit: boolean; release: PortalRelease }
+export interface ConfiguredMod { name: string; version?: string; enabled: boolean }
 export interface ModPlan {
   id: string;
   factorioVersion: string;
-  roots: Array<{ name: string; version?: string }>;
+  roots: ConfiguredMod[];
   selections: ModSelection[];
   optional: Array<{ from: string; dependency: Dependency }>;
   createdAt: string;

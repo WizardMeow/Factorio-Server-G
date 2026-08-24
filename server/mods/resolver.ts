@@ -12,7 +12,7 @@ export class ModResolver {
   private cache = new Map<string, Awaited<ReturnType<ModMetadataProvider['getMod']>>>();
   constructor(private readonly provider: ModMetadataProvider, private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}) {}
 
-  async resolve(factorioVersion: string, roots: Array<{ name: string; version?: string }>): Promise<ModPlan> {
+  async resolve(factorioVersion: string, roots: Array<{ name: string; version?: string; enabled?: boolean }>): Promise<ModPlan> {
     this.log({ factorioVersion, roots: roots.map(root => root.name) }, 'mod dependency resolution started');
     const normalizedFactorio = factorioVersion.match(/^\d+\.\d+/)?.[0];
     if (!normalizedFactorio) throw new ModResolutionError(`An exact Factorio major.minor is required, received ${factorioVersion}`);
@@ -20,7 +20,7 @@ export class ModResolver {
     for (const root of roots) constraints.set(root.name, [{ from: 'root', operator: root.version ? '=' : undefined, version: root.version }]);
     const result = await this.search(normalizedFactorio, constraints, new Map(), [], new Set(roots.map(root => root.name)));
     if (!result) throw new ModResolutionError('No compatible dependency graph could be resolved');
-    const plan = { id: randomUUID(), factorioVersion: normalizedFactorio, roots, selections: [...result.selected.values()].sort((a, b) => a.name.localeCompare(b.name)), optional: result.optional, createdAt: new Date().toISOString() };
+    const plan = { id: randomUUID(), factorioVersion: normalizedFactorio, roots: roots.map(root => ({ ...root, enabled: root.enabled ?? true })), selections: [...result.selected.values()].sort((a, b) => a.name.localeCompare(b.name)), optional: result.optional, createdAt: new Date().toISOString() };
     this.log({ planId: plan.id, selectionCount: plan.selections.length, optionalCount: plan.optional.length }, 'mod dependency resolution completed');
     return plan;
   }

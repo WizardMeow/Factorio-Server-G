@@ -36,14 +36,33 @@ describe('core HTTP flows', () => {
     await waitFor(() => adapter.calls.includes('start'));
     expect(adapter.calls).toEqual(['stop', 'start']);
   });
+
+  test('lists configured mods and plans update, disable, and removal without mutating immediately', async () => {
+    const { app, root } = await fixture();
+    await writeFile(join(root, 'config/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
+    await writeFile(join(root, 'config/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '1.0.0', explicit: true, enabled: true }] }));
+    const overview = await app.inject({ method: 'GET', url: '/api/overview' });
+    expect(overview.json().mods).toMatchObject({ roots: [{ name: 'demo', enabled: true }], installed: [{ name: 'demo', version: '1.0.0' }] });
+
+    const update = await app.inject({ method: 'POST', url: '/api/mods/change-plan', payload: { action: 'update', name: 'demo', version: '1.0.0' } });
+    expect(update.statusCode).toBe(200);
+    expect(update.json().selections).toHaveLength(1);
+    const disable = await app.inject({ method: 'POST', url: '/api/mods/change-plan', payload: { action: 'set-enabled', name: 'demo', enabled: false } });
+    expect(disable.json()).toMatchObject({ roots: [{ name: 'demo', enabled: false }], selections: [] });
+    const remove = await app.inject({ method: 'POST', url: '/api/mods/change-plan', payload: { action: 'remove', name: 'demo' } });
+    expect(remove.json()).toMatchObject({ roots: [], selections: [] });
+  });
 });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'factorio-app-'));
   await mkdir(join(root, 'config'), { recursive: true });
   await writeFile(join(root, 'config/factorio.json'), JSON.stringify({ version: 'latest' }));
+  await writeFile(join(root, 'config/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [] }));
+  await writeFile(join(root, 'config/mods.lock.json'), JSON.stringify({ factorioVersion: '2.0', mods: [] }));
+  await writeFile(join(root, 'config/server-settings.json'), JSON.stringify({ visibility: { public: false, lan: false } }));
   const adapter = new FakeAdapter();
-  const app = await buildApp({ projectRoot: root, adapter });
+  const app = await buildApp({ projectRoot: root, adapter, modProvider: { async getMod(name) { return { name, title: name, summary: '', releases: [{ version: '1.0.0', download_url: `/download/${name}`, file_name: `${name}_1.0.0.zip`, released_at: '2026-01-01T00:00:00Z', sha1: '0'.repeat(40), info_json: { factorio_version: '2.0', dependencies: [] } }] }; } } });
   apps.push(app);
   return { app, adapter, root };
 }

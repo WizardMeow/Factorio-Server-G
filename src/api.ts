@@ -1,4 +1,4 @@
-export type { ModPlanDto as ModPlan, OperationDto as Operation, OverviewDto as Overview, SaveEntryDto as SaveEntry } from '../shared/contracts';
+export type { ConfiguredModDto as ConfiguredMod, InstalledModDto as InstalledMod, ModPlanDto as ModPlan, OperationDto as Operation, OverviewDto as Overview, SaveEntryDto as SaveEntry } from '../shared/contracts';
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
