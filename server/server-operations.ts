@@ -24,7 +24,6 @@ export class ServerOperations {
         const launch = await data.readNextLaunch();
         const latestAutosave = await saves.latestAutosave();
         const usesTemporarySave = launch !== null;
-        await setStage('pulling');
         await this.adapter.pull();
         if (await installer.hasPending()) await setStage('installing-mods');
         await installer.applyPending();

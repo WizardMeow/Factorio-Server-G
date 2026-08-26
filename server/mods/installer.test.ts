@@ -35,6 +35,41 @@ describe('ModInstaller', () => {
     expect(await readFile(join(root, 'runtime/factorio/mods/old.zip'), 'utf8')).toBe('old');
   });
 
+  test('reuses a verified archive from the shared Mod cache instead of downloading it again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'factorio-mods-'));
+    const bytes = Buffer.from('archive');
+    const sha1 = createHash('sha1').update(bytes).digest('hex');
+    await mkdir(join(root, 'runtime/factorio/mods'), { recursive: true });
+    const cacheRoot = join(root, 'mod-cache');
+    await mkdir(cacheRoot, { recursive: true });
+    await writeFile(join(cacheRoot, `${sha1}.zip`), bytes);
+    const log: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    rs.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(bytes));
+
+    await new ModInstaller(join(root, 'config'), join(root, 'runtime'), 'user', 'secret', (fields, message) => log.push({ fields, message }), cacheRoot).apply(fixturePlan(sha1));
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(log).toContainEqual({ fields: expect.objectContaining({ modName: 'demo', modIndex: 1, modTotal: 1 }), message: 'reusing cached mod archive' });
+  });
+
+  test('seeds the shared Mod cache from a verified active generation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'factorio-mods-'));
+    const bytes = Buffer.from('archive');
+    const sha1 = createHash('sha1').update(bytes).digest('hex');
+    const modsRoot = join(root, 'runtime/factorio/mods');
+    const cacheRoot = join(root, 'mod-cache');
+    await mkdir(modsRoot, { recursive: true });
+    await writeFile(join(modsRoot, 'demo_1.0.0.zip'), bytes);
+    const log: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    rs.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(bytes));
+
+    await new ModInstaller(join(root, 'config'), join(root, 'runtime'), 'user', 'secret', (fields, message) => log.push({ fields, message }), cacheRoot).apply(fixturePlan(sha1));
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(await readFile(join(cacheRoot, `${sha1}.zip`))).toEqual(bytes);
+    expect(log).toContainEqual({ fields: expect.objectContaining({ modName: 'demo' }), message: 'seeded mod cache from active generation' });
+  });
+
   test('can remove every external mod without download credentials', async () => {
     const root = await mkdtemp(join(tmpdir(), 'factorio-mods-'));
     await mkdir(join(root, 'runtime/factorio/mods'), { recursive: true });

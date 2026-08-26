@@ -1,13 +1,18 @@
 import { Pause, Play, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { LogEntry } from '../api';
 import { PanelHeader } from './PanelHeader';
 
-export function LogPanel({ title, eyebrow, logs, stream, historyLoaded, onClear }: { title: string; eyebrow: string; logs: string[]; stream: 'connecting' | 'live' | 'retrying'; historyLoaded: boolean; onClear(): void }) {
+const levelClasses: Record<LogEntry['level'], string> = {
+  info: 'text-[#a8b1ac]', success: 'text-[#87cfa4]', warning: 'text-[#f2c178]', error: 'text-[#fb8b95]',
+};
+
+export function LogPanel({ title, eyebrow, logs, stream, historyLoaded, onClear }: { title: string; eyebrow: string; logs: LogEntry[]; stream: 'connecting' | 'live' | 'retrying'; historyLoaded: boolean; onClear(): void }) {
   const [filter, setFilter] = useState('');
   const [following, setFollowing] = useState(true);
   const end = useRef<HTMLDivElement>(null);
   const liveScrolling = useRef(false);
-  const visibleLogs = useMemo(() => logs.filter(line => line.toLowerCase().includes(filter.toLowerCase())), [logs, filter]);
+  const visibleLogs = useMemo(() => logs.filter(entry => entry.line.toLowerCase().includes(filter.toLowerCase())), [logs, filter]);
 
   useEffect(() => {
     if (following) end.current?.scrollIntoView({ behavior: liveScrolling.current ? 'smooth' : 'auto' });
@@ -25,7 +30,7 @@ export function LogPanel({ title, eyebrow, logs, stream, historyLoaded, onClear 
       </div>
     </PanelHeader>
     <div className="h-[418px] overflow-auto bg-[#090c0b] pt-3.5 pb-[18px] font-mono text-[11px] leading-[1.75] text-[#a8b1ac]" onScroll={event => { const node = event.currentTarget; if (node.scrollHeight - node.scrollTop - node.clientHeight > 24) setFollowing(false); }}>
-      {visibleLogs.length ? visibleLogs.map((line, index) => <div className="px-4 whitespace-pre-wrap break-words hover:bg-[#131715]" key={`${index}-${line}`}><span className="inline-block w-[42px] text-[#3f4843] select-none">{String(index + 1).padStart(3, '0')}</span>{line}</div>) : <div className="grid h-full place-items-center text-[#4d5651]">Waiting for {title.toLowerCase()}…</div>}
+      {visibleLogs.length ? visibleLogs.map((entry, index) => <div className={`px-4 whitespace-pre-wrap break-words hover:bg-[#131715] ${levelClasses[entry.level]}`} key={`${index}-${entry.line}`}><span className="inline-block w-[42px] text-[#3f4843] select-none">{String(index + 1).padStart(3, '0')}</span><span className="mr-2 inline-block w-[39px] text-[8px] tracking-[.08em] opacity-70">{entry.level}</span>{entry.line}</div>) : <div className="grid h-full place-items-center text-[#4d5651]">Waiting for {title.toLowerCase()}…</div>}
       <div ref={end} />
     </div>
   </section>;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ModPlan } from './types.js';
 import { redact } from '../redact.js';
@@ -20,7 +20,7 @@ const trackedLockSchema = z.object({
 const generationSchema = z.object({ id: z.string(), planId: z.string(), createdAt: z.string(), mods: z.array(z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), enabled: z.boolean() })).default([]), plan: pendingPlanSchema.optional() });
 
 export class ModInstaller {
-  constructor(private readonly configRoot: string, private readonly runtimeRoot: string, private readonly username?: string, private readonly token?: string, private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}) {}
+  constructor(private readonly configRoot: string, private readonly runtimeRoot: string, private readonly username?: string, private readonly token?: string, private readonly log: (fields: Record<string, unknown>, message: string) => void = () => {}, private readonly cacheRoot = join(runtimeRoot, 'webui', 'mod-cache')) {}
 
   async stage(plan: ModPlan) {
     await mkdir(this.configRoot, { recursive: true });
@@ -79,8 +79,26 @@ export class ModInstaller {
     await mkdir(staged, { recursive: true });
     this.log({ planId: plan.id, generationId, archiveCount: plan.selections.length }, 'mod generation staging started');
     try {
-      for (const selection of plan.selections) {
-        this.log({ planId: plan.id, generationId, modName: selection.name, modVersion: selection.version }, 'downloading mod archive');
+      for (const [index, selection] of plan.selections.entries()) {
+        const progress = { planId: plan.id, generationId, modName: selection.name, modVersion: selection.version, modIndex: index + 1, modTotal: plan.selections.length };
+        const archive = join(this.cacheRoot, `${selection.release.sha1.toLowerCase()}.zip`);
+        const destination = join(staged, selection.release.file_name);
+        if (!await exists(archive)) {
+          const activeArchive = join(activeMods, selection.release.file_name);
+          try {
+            const activeBytes = await readFile(activeArchive);
+            if (createHash('sha1').update(activeBytes).digest('hex') === selection.release.sha1) {
+              await this.cacheArchive(archive, activeBytes);
+              this.log(progress, 'seeded mod cache from active generation');
+            }
+          } catch { /* The exact archive is not part of the active generation. */ }
+        }
+        if (await exists(archive)) {
+          await copyFile(archive, destination);
+          this.log(progress, 'reusing cached mod archive');
+          continue;
+        }
+        this.log(progress, 'downloading mod archive');
         const url = new URL(selection.release.download_url, 'https://mods.factorio.com');
         url.searchParams.set('username', username); url.searchParams.set('token', token);
         const response = await fetch(url);
@@ -88,8 +106,9 @@ export class ModInstaller {
         const bytes = Buffer.from(await response.arrayBuffer());
         const actual = createHash('sha1').update(bytes).digest('hex');
         if (actual !== selection.release.sha1) throw new Error(`SHA1 mismatch for ${selection.name}@${selection.version}`);
-        this.log({ planId: plan.id, generationId, modName: selection.name, sha1: actual }, 'mod archive verified');
-        await writeFile(join(staged, selection.release.file_name), bytes);
+        this.log({ ...progress, sha1: actual }, 'mod archive verified');
+        await this.cacheArchive(archive, bytes);
+        await copyFile(archive, destination);
       }
       await writeFile(join(staged, 'mod-list.json'), `${JSON.stringify({ mods: [{ name: 'base', enabled: true }, ...plan.selections.map(item => ({ name: item.name, enabled: true }))] }, null, 2)}\n`);
       await writeFile(join(staged, '.generation.json'), `${JSON.stringify({ id: generationId, planId: plan.id, createdAt: new Date().toISOString(), mods: plan.selections.map(item => ({ name: item.name, version: item.version, explicit: item.explicit, enabled: true })), plan }, null, 2)}\n`);
@@ -136,6 +155,14 @@ export class ModInstaller {
     await mkdir(this.configRoot, { recursive: true });
     await atomicJson(join(this.configRoot, 'mods.json'), { factorioVersion: plan.factorioVersion, mods: plan.roots });
     await atomicJson(join(this.configRoot, 'mods.lock.json'), { factorioVersion: plan.factorioVersion, generatedAt: new Date().toISOString(), mods: plan.selections.map(item => ({ name: item.name, version: item.version, sha1: item.release.sha1, fileName: item.release.file_name, downloadUrl: item.release.download_url, enabled: true, source: 'mod-portal', explicit: item.explicit })) });
+  }
+
+  private async cacheArchive(path: string, bytes: Buffer) {
+    await mkdir(this.cacheRoot, { recursive: true });
+    if (await exists(path)) return;
+    const temp = `${path}.${randomUUID()}.tmp`;
+    await writeFile(temp, bytes);
+    await rename(temp, path);
   }
 }
 async function exists(path: string) { try { await readdir(path); return true; } catch { try { await readFile(path); return true; } catch { return false; } } }

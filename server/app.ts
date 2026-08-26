@@ -5,6 +5,7 @@ import { constants, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
+import { EventEmitter } from 'node:events';
 import type { ComposeAdapter, OperationRecord } from './types.js';
 import { OperationConflictError, OperationManager } from './operation-manager.js';
 import { MAIN_SAVE_NAME, SaveService } from './save-service.js';
@@ -21,23 +22,53 @@ import { fetchFactorioVersions } from './factorio-versions.js';
 import { ProfileDataStore } from './profile-data-store.js';
 import { ServerOperations } from './server-operations.js';
 import { modApplyBodySchema, modChangePlanBodySchema, modDetailsSchema, modPlanBodySchema, modPlanConfigBodySchema, profileActivateBodySchema, profileCreateBodySchema, profileParamsSchema, profileQuickImportResultSchema, profileRenameBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveNextLaunchBodySchema, saveUploadResultSchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
+import type { LogEntryDto } from '../shared/contracts.js';
 
 interface AppOptions { projectRoot: string; adapter: ComposeAdapter; serveFrontend?: boolean; modProvider?: ModMetadataProvider }
 const BUILT_IN_MODS = new Set(['base', 'core', 'elevated-rails', 'quality', 'recycler', 'space-age']);
 
-function formatStartupOperation(record: OperationRecord) {
+function formatStartupOperation(record: OperationRecord): LogEntryDto {
+  const stageLabels: Partial<Record<OperationRecord['stage'], string>> = {
+    pulling: 'Pulling Factorio image', 'installing-mods': 'Installing staged Mods', recreating: 'Recreating Factorio container',
+    starting: 'Waiting for Factorio to become ready', ready: 'Factorio is ready', stopping: 'Stopping Factorio',
+  };
+  const stage = stageLabels[record.stage] ?? record.stage;
   const result = record.result ? ` (${record.result})` : '';
   const error = record.error ? `: ${redact(record.error)}` : '';
-  return `[${record.kind}] ${record.stage}${result}${error}`;
+  return { source: 'startup', level: record.result === 'failed' ? 'error' : record.result === 'interrupted' ? 'warning' : record.stage === 'ready' || record.result === 'succeeded' ? 'success' : 'info', line: `[${record.kind}] ${stage}${result}${error}` };
+}
+
+function formatInstallerProgress(fields: Record<string, unknown>, message: string): LogEntryDto {
+  const modName = typeof fields.modName === 'string' ? fields.modName : undefined;
+  const modVersion = typeof fields.modVersion === 'string' ? fields.modVersion : undefined;
+  const modIndex = typeof fields.modIndex === 'number' ? fields.modIndex : undefined;
+  const modTotal = typeof fields.modTotal === 'number' ? fields.modTotal : typeof fields.archiveCount === 'number' ? fields.archiveCount : undefined;
+  const mod = modName ? `${modName}${modVersion ? `@${modVersion}` : ''}` : undefined;
+  if (message === 'downloading mod archive') return { source: 'startup', level: 'info', line: `Downloading Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
+  if (message === 'mod archive verified') return { source: 'startup', level: 'success', line: `Verified Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
+  if (message === 'seeded mod cache from active generation') return { source: 'startup', level: 'success', line: `Cached active Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
+  if (message === 'reusing cached mod archive') return { source: 'startup', level: 'success', line: `Reusing cached Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
+  if (message === 'mod generation staging started') return { source: 'startup', level: 'info', line: `Preparing Mod generation (${modTotal ?? 0} archives)` };
+  if (message === 'mod generation activated') return { source: 'startup', level: 'success', line: 'Mod generation activated' };
+  if (message === 'mod generation staging failed') return { source: 'startup', level: 'error', line: `Mod installation failed${typeof fields.error === 'string' ? `: ${fields.error}` : ''}` };
+  return { source: 'startup', level: 'info', line: message };
 }
 
 export async function buildApp(options: AppOptions) {
   const app = Fastify({ logger: true });
   const runtimeRoot = resolve(options.projectRoot, 'runtime');
   const operations = new OperationManager(join(runtimeRoot, 'webui', 'operations.json'), (fields, message) => app.log.info(fields, message));
+  const modCacheRoot = join(runtimeRoot, 'webui', 'mod-cache');
   const profiles = new ProfileService(options.projectRoot);
   const resolver = new ModResolver(options.modProvider ?? new ModPortalClient(), (fields, message) => app.log.info(fields, message));
   const plans = new Map<string, { profileId: string; plan: ModPlan }>();
+  const startupEvents = new EventEmitter();
+  const startupHistory: LogEntryDto[] = [];
+  const publishStartupLog = (entry: LogEntryDto) => {
+    startupHistory.push(entry);
+    if (startupHistory.length > 500) startupHistory.shift();
+    startupEvents.emit('log', entry);
+  };
   await profiles.initialize();
   await operations.initialize();
   await activeServices();
@@ -47,7 +78,10 @@ export async function buildApp(options: AppOptions) {
     const profile = await profiles.context();
     const saves = new SaveService(profile.runtimeRoot);
     await Promise.all([saves.initialize(), ensureDefaultServerSettings(options.projectRoot, profile.runtimeRoot)]);
-    const installer = new ModInstaller(profile.configRoot, profile.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: profile.id, ...fields }, message));
+    const installer = new ModInstaller(profile.configRoot, profile.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => {
+      app.log.info({ profileId: profile.id, ...fields }, message);
+      publishStartupLog(formatInstallerProgress(fields, message));
+    }, modCacheRoot);
     return { profile, saves, installer, data: new ProfileDataStore(profile.configRoot, profile.runtimeRoot) };
   }
   const serverOperations = new ServerOperations(options.adapter, operations, activeServices);
@@ -88,7 +122,7 @@ export async function buildApp(options: AppOptions) {
     const profile = await operations.runExclusive('create-profile', 'recreating', async () => {
       const created = await profiles.create();
       const context = await profiles.context(created.id);
-      const profileInstaller = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created.id, ...fields }, message));
+      const profileInstaller = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created.id, ...fields }, message), modCacheRoot);
       await Promise.all([new SaveService(context.runtimeRoot).initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot), profileInstaller.stageFromCurrentConfig()]);
       return created;
     });
@@ -325,7 +359,7 @@ export async function buildApp(options: AppOptions) {
         const context = await profiles.context(created.id);
         const saves = new SaveService(context.runtimeRoot);
         const data = new ProfileDataStore(context.configRoot, context.runtimeRoot);
-        const installer = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created!.id, ...fields }, message));
+        const installer = new ModInstaller(context.configRoot, context.runtimeRoot, process.env.FACTORIO_USERNAME, process.env.FACTORIO_TOKEN, (fields, message) => app.log.info({ profileId: created!.id, ...fields }, message), modCacheRoot);
         await Promise.all([saves.initialize(), ensureDefaultServerSettings(options.projectRoot, context.runtimeRoot)]);
         const destination = join(saves.importsDir, safeName);
         await rename(temp, destination);
@@ -405,20 +439,23 @@ export async function buildApp(options: AppOptions) {
     const onOperation = (snapshot: { active?: OperationRecord; history: OperationRecord[] }) => {
       send('operation', snapshot);
       const operation = snapshot.active ?? snapshot.history[0];
-      if (operation) send('log', { source: 'startup', line: formatStartupOperation(operation) });
+      if (operation) send('log', formatStartupOperation(operation));
     };
     operations.on('change', onOperation);
     send('connected', { connectedAt: new Date().toISOString() });
+    for (const entry of startupHistory) send('log', entry);
     onOperation(operations.snapshot);
     const recentLogs = await options.adapter.recentLogs(500).catch(() => []);
-    for (const line of await options.adapter.recentManagementLogs?.() ?? []) send('log', { source: 'container', line });
+    for (const line of await options.adapter.recentManagementLogs?.() ?? []) send('log', classifyContainerLog(line));
     for (const line of recentLogs) {
       const entry = classifyContainerLog(redact(line));
       if (entry.source === 'game') send('log', entry);
     }
     send('history-complete', { count: recentLogs.length });
     const controller = new AbortController();
-    const stopManagementLogs = options.adapter.onManagementLog?.(line => send('log', { source: 'container', line }));
+    const onStartupLog = (entry: LogEntryDto) => send('log', entry);
+    startupEvents.on('log', onStartupLog);
+    const stopManagementLogs = options.adapter.onManagementLog?.(line => send('log', classifyContainerLog(line)));
     const heartbeat = setInterval(() => { if (!closed) reply.raw.write(': keepalive\n\n'); }, 15_000);
     request.log.info('log event stream connected');
     void options.adapter.followLogs(line => {
@@ -429,6 +466,7 @@ export async function buildApp(options: AppOptions) {
       closed = true;
       clearInterval(heartbeat);
       operations.off('change', onOperation);
+      startupEvents.off('log', onStartupLog);
       controller.abort();
       stopManagementLogs?.();
       request.log.info('log event stream disconnected');
