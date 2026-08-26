@@ -1,4 +1,4 @@
-export type DependencyKind = 'required' | 'optional' | 'hidden-optional' | 'incompatible';
+export type DependencyKind = 'required' | 'optional' | 'recommended' | 'hidden-optional' | 'no-order' | 'incompatible';
 export interface Dependency { kind: DependencyKind; name: string; operator?: string; version?: string; raw: string }
 import type { PortalRelease } from './schemas.js';
 export type { PortalMod, PortalRelease } from './schemas.js';

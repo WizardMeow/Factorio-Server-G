@@ -5,7 +5,7 @@ import { constants, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
-import type { ComposeAdapter } from './types.js';
+import type { ComposeAdapter, OperationRecord } from './types.js';
 import { OperationConflictError, OperationManager } from './operation-manager.js';
 import { SaveService } from './save-service.js';
 import { redact } from './redact.js';
@@ -20,10 +20,16 @@ import { inspectFactorioSave } from './save-inspector.js';
 import { fetchFactorioVersions } from './factorio-versions.js';
 import { ProfileDataStore } from './profile-data-store.js';
 import { ServerOperations } from './server-operations.js';
-import { modApplyBodySchema, modChangePlanBodySchema, modPlanBodySchema, profileActivateBodySchema, profileCreateBodySchema, profileParamsSchema, profileQuickImportResultSchema, profileRenameBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveNextLaunchBodySchema, saveUploadResultSchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
+import { modApplyBodySchema, modChangePlanBodySchema, modDetailsSchema, modPlanBodySchema, modPlanConfigBodySchema, profileActivateBodySchema, profileCreateBodySchema, profileParamsSchema, profileQuickImportResultSchema, profileRenameBodySchema, saveBackupBodySchema, saveDeleteBodySchema, saveDownloadParamsSchema, saveNextLaunchBodySchema, saveUploadResultSchema, serverActionParamsSchema, versionBodySchema } from '../shared/contracts.js';
 
 interface AppOptions { projectRoot: string; adapter: ComposeAdapter; serveFrontend?: boolean; modProvider?: ModMetadataProvider }
-const BUILT_IN_MODS = new Set(['base', 'core', 'elevated-rails', 'quality', 'space-age']);
+const BUILT_IN_MODS = new Set(['base', 'core', 'elevated-rails', 'quality', 'recycler', 'space-age']);
+
+function formatStartupOperation(record: OperationRecord) {
+  const result = record.result ? ` (${record.result})` : '';
+  const error = record.error ? `: ${redact(record.error)}` : '';
+  return `[${record.kind}] ${record.stage}${result}${error}`;
+}
 
 export async function buildApp(options: AppOptions) {
   const app = Fastify({ logger: true });
@@ -142,6 +148,39 @@ export async function buildApp(options: AppOptions) {
     plans.set(plan.id, { profileId: profile.id, plan });
     request.log.info({ planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod plan resolved');
     return reply.send(plan);
+  });
+
+  app.post('/api/mods/plan-config', async (request, reply) => {
+    const parsed = modPlanConfigBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'A valid mod list is required' });
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before planning mods' });
+    let roots: ConfiguredMod[];
+    try { roots = normalizeDraftRoots(parsed.data.roots); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Invalid mod list' }); }
+    const optional = (parsed.data.optional ?? []).map(name => ({ name: normalizeModName(name) }));
+    const { profile, data } = await activeServices();
+    const config = await data.readModConfig();
+    const plan = await operations.runExclusive('plan-mod-config', 'recreating', () => resolveConfiguredPlan(resolver, config.factorioVersion, roots, optional));
+    plans.set(plan.id, { profileId: profile.id, plan });
+    request.log.info({ planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod configuration plan resolved');
+    return reply.send(plan);
+  });
+
+  app.get('/api/mods/details', async (request, reply) => {
+    const raw = (request.query as { names?: unknown }).names;
+    if (typeof raw !== 'string') return reply.code(400).send({ error: 'names is required' });
+    let names: string[];
+    try { names = [...new Set(raw.split(',').filter(Boolean).map(normalizeModName))]; }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Invalid mod name' }); }
+    const details = await Promise.all(names.map(async name => {
+      try { return await resolver.details(name); }
+      catch (error) {
+        request.log.warn({ modName: name, error: redact(error) }, 'Mod Portal details unavailable');
+        return { name, title: name, summary: '', thumbnail: null };
+      }
+    }));
+    return reply.send(modDetailsSchema.parse(details));
   });
 
   app.post('/api/mods/change-plan', async (request, reply) => {
@@ -338,9 +377,14 @@ export async function buildApp(options: AppOptions) {
     reply.raw.flushHeaders();
     let closed = false;
     const send = (event: string, data: unknown) => !closed && reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    const onOperation = (snapshot: unknown) => send('operation', snapshot);
+    const onOperation = (snapshot: { active?: OperationRecord; history: OperationRecord[] }) => {
+      send('operation', snapshot);
+      const operation = snapshot.active ?? snapshot.history[0];
+      if (operation) send('log', { source: 'startup', line: formatStartupOperation(operation) });
+    };
     operations.on('change', onOperation);
     send('connected', { connectedAt: new Date().toISOString() });
+    onOperation(operations.snapshot);
     const recentLogs = await options.adapter.recentLogs(500).catch(() => []);
     for (const line of await options.adapter.recentManagementLogs?.() ?? []) send('log', { source: 'container', line });
     for (const line of recentLogs) {
@@ -382,6 +426,16 @@ async function ensureDefaultServerSettings(projectRoot: string, runtimeRoot: str
 
 function normalizeConfiguredMods(mods: Array<{ name: string; version?: string; enabled?: boolean }>): ConfiguredMod[] {
   return mods.map(mod => ({ name: mod.name, version: mod.version, enabled: mod.enabled ?? true }));
+}
+
+function normalizeDraftRoots(mods: ConfiguredMod[]) {
+  const names = new Set<string>();
+  return mods.map(mod => {
+    const name = normalizeModName(mod.name);
+    if (names.has(name)) throw new Error(`Duplicate mod: ${name}`);
+    names.add(name);
+    return { name, version: mod.version || undefined, enabled: mod.enabled };
+  });
 }
 
 async function resolveConfiguredPlan(resolver: ModResolver, factorioVersion: string, roots: ConfiguredMod[], extra: Array<{ name: string; version?: string }> = []) {

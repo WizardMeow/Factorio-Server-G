@@ -15,6 +15,10 @@ describe('ModResolver', () => {
     expect(parseDependency('? helper')).toMatchObject({ kind: 'optional', name: 'helper' });
     expect(parseDependency('(?) hidden')).toMatchObject({ kind: 'hidden-optional', name: 'hidden' });
     expect(parseDependency('! conflict < 2.0.0')).toMatchObject({ kind: 'incompatible', name: 'conflict' });
+    expect(parseDependency('! Squeak Through')).toMatchObject({ kind: 'incompatible', name: 'Squeak Through' });
+    expect(parseDependency('Squeak Through >= 2.0.0')).toMatchObject({ kind: 'required', name: 'Squeak Through', operator: '>=', version: '2.0.0' });
+    expect(parseDependency('+ enable-all-feature-flags')).toMatchObject({ kind: 'recommended', name: 'enable-all-feature-flags' });
+    expect(parseDependency('~ no-order-library >= 1.0.0')).toMatchObject({ kind: 'no-order', name: 'no-order-library', operator: '>=', version: '1.0.0' });
   });
 
   test('backtracks from newest dependency release to produce a complete graph', async () => {
@@ -41,5 +45,5 @@ describe('ModResolver', () => {
 });
 
 function fixtureProvider(mods: Record<string, PortalMod>): ModMetadataProvider { return { async getMod(name) { const value = mods[name]; if (!value) throw new Error(`missing fixture ${name}`); return value; } }; }
-function mod(name: string, releases: PortalRelease[]): PortalMod { return { name, title: name, summary: '', releases }; }
+function mod(name: string, releases: PortalRelease[]): PortalMod { return { name, title: name, summary: '', thumbnail: null, releases }; }
 function release(version: string, dependencies: string[] = []): PortalRelease { return { version, download_url: `/download/x/${version}.zip`, file_name: `x_${version}.zip`, released_at: '2026-01-01T00:00:00Z', sha1: '0'.repeat(40), info_json: { factorio_version: '2.0', dependencies } }; }

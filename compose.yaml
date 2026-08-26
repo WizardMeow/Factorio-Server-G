@@ -22,11 +22,15 @@ services:
       NODE_ENV: production
       PORT: 3000
       FACTORIO_PORT: "${FACTORIO_PORT:-34197}"
+      FACTORIO_USERNAME: "${FACTORIO_USERNAME:-}"
+      FACTORIO_TOKEN: "${FACTORIO_TOKEN:-}"
       PROJECT_ROOT: /project
       FRONTEND_ROOT: /app/dist
       HOST_PROJECT_ROOT: "${HOST_PROJECT_ROOT:?Set HOST_PROJECT_ROOT to this repository's absolute host path}"
-      HTTP_PROXY: "${OUTBOUND_HTTP_PROXY:-}"
-      HTTPS_PROXY: "${OUTBOUND_HTTPS_PROXY:-}"
+      # The default is a host-local relay bound only to the Docker bridge.
+      # A non-empty OUTBOUND_* value still overrides it.
+      HTTP_PROXY: "${OUTBOUND_HTTP_PROXY:-http://172.18.0.1:7891}"
+      HTTPS_PROXY: "${OUTBOUND_HTTPS_PROXY:-http://172.18.0.1:7891}"
       NO_PROXY: "${OUTBOUND_NO_PROXY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -45,6 +49,11 @@ services:
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
+      # The image accepts a space-separated subset of: elevated-rails,
+      # quality, and space-age. The default keeps only elevated rails, which
+      # leaves Quality and its recycler disabled. Set DLC_SPACE_AGE in .env to
+      # override this per deployment.
+      DLC_SPACE_AGE: "${DLC_SPACE_AGE:-elevated-rails}"
       LOAD_LATEST_SAVE: "false"
       SAVE_NAME: "${FACTORIO_SAVE_NAME:-_autosave1}"
       GENERATE_NEW_SAVE: "false"

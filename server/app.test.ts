@@ -64,6 +64,21 @@ describe('core HTTP flows', () => {
     expect(remove.json()).toMatchObject({ roots: [], selections: [] });
   });
 
+  test('plans an accumulated editable mod list and exposes Mod Portal details', async () => {
+    const { app, root } = await fixture();
+    await writeFile(join(root, 'config/profiles/p1/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'NanoBot3', version: '1.0.0', enabled: true }] }));
+
+    const plan = await app.inject({ method: 'POST', url: '/api/mods/plan-config', payload: {
+      roots: [{ name: 'AutoGhostBuilder', enabled: true }],
+    } });
+    expect(plan.statusCode).toBe(200);
+    expect(plan.json()).toMatchObject({ roots: [{ name: 'AutoGhostBuilder', enabled: true }], selections: [{ name: 'AutoGhostBuilder', explicit: true }] });
+
+    const details = await app.inject({ method: 'GET', url: '/api/mods/details?names=AutoGhostBuilder' });
+    expect(details.statusCode).toBe(200);
+    expect(details.json()).toEqual([{ name: 'AutoGhostBuilder', title: 'AutoGhostBuilder', summary: '', thumbnail: null }]);
+  });
+
   test('selects an existing autosave for subsequent starts only while stopped', async () => {
     const { app, adapter, root } = await fixture();
     await writeFile(join(root, 'runtime/profiles/p1/factorio/saves/_autosave2.zip'), 'world');
@@ -112,6 +127,13 @@ describe('core HTTP flows', () => {
     expect(JSON.parse(await readFile(join(root, 'runtime/webui/profile.json'), 'utf8'))).toEqual({ activeId: 'p2' });
   });
 
+  test('quick import does not treat bundled recycler as a portal mod', async () => {
+    const { app } = await fixture();
+    const response = await uploadSave(app, '/api/profiles/quick-import', 'recycler.zip', ['base', 'recycler']);
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ mods: [] });
+  });
+
   test('creates, renames, activates, and deletes isolated profiles', async () => {
     const { app, root } = await fixture();
     const response = await app.inject({ method: 'POST', url: '/api/profiles' });
@@ -140,8 +162,8 @@ async function fixture() {
 }
 async function waitFor(predicate: () => boolean) { for (let i = 0; i < 50; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('timeout'); }
 
-async function uploadSave(app: Awaited<ReturnType<typeof buildApp>>, url: string, filename: string) {
-  const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture() }));
+async function uploadSave(app: Awaited<ReturnType<typeof buildApp>>, url: string, filename: string, mods?: string[]) {
+  const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture(mods) }));
   const boundary = 'factorio-save-boundary';
   const payload = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/zip\r\n\r\n`),
@@ -151,7 +173,7 @@ async function uploadSave(app: Awaited<ReturnType<typeof buildApp>>, url: string
   return app.inject({ method: 'POST', url, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
 }
 
-function levelInitFixture() {
+function levelInitFixture(mods = ['base']) {
   const bytes: number[] = [];
   const u8 = (value: number) => bytes.push(value);
   const u16 = (value: number) => bytes.push(value & 255, value >> 8);
@@ -160,6 +182,7 @@ function levelInitFixture() {
   u16(2); u16(0); u16(77); u16(0); u8(0);
   text('freeplay'); text(''); text('base'); u8(0); u8(0); u8(0); text('');
   u8(1); u8(0); u8(0); u8(0); u8(2); u8(0); u8(77); u32(1); u8(2); bytes.push(0, 0, 160, 0);
-  u8(1); text('base'); u8(2); u8(0); u8(77); u32(0);
+  u8(mods.length);
+  for (const mod of mods) { text(mod); u8(2); u8(0); u8(77); u32(0); }
   return Uint8Array.from(bytes);
 }

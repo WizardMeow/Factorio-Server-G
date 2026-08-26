@@ -10,7 +10,7 @@ const pendingPlanSchema = z.object({
   id: z.string(), factorioVersion: z.string(), createdAt: z.string(),
   roots: z.array(z.object({ name: z.string(), version: z.string().optional(), enabled: z.boolean() })),
   selections: z.array(z.object({ name: z.string(), version: z.string(), explicit: z.boolean(), release: portalReleaseSchema })),
-  optional: z.array(z.object({ from: z.string(), dependency: z.object({ kind: z.enum(['required', 'optional', 'hidden-optional', 'incompatible']), name: z.string(), operator: z.string().optional(), version: z.string().optional(), raw: z.string() }) })),
+  optional: z.array(z.object({ from: z.string(), dependency: z.object({ kind: z.enum(['required', 'optional', 'recommended', 'hidden-optional', 'no-order', 'incompatible']), name: z.string(), operator: z.string().optional(), version: z.string().optional(), raw: z.string() }) })),
 });
 const trackedConfigSchema = z.object({ factorioVersion: z.string(), mods: z.array(z.object({ name: z.string(), version: z.string().optional(), enabled: z.boolean().optional() })) });
 const trackedLockSchema = z.object({

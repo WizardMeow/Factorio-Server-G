@@ -55,7 +55,8 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
     </Tabs.Content>
 
     <Tabs.Content className="outline-none" value="logs">
-      <div className="mt-4 grid grid-cols-2 gap-4 max-[850px]:grid-cols-1">
+      <div className="mt-4 grid grid-cols-3 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
+        <LogPanel eyebrow="LIFECYCLE" title="Startup Process" logs={logs.filter(entry => entry.source === 'startup').map(entry => entry.line)} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('startup')} />
         <LogPanel eyebrow="FACTORIO OUTPUT" title="Game Logs" logs={logs.filter(entry => entry.source === 'game').map(entry => entry.line)} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('game')} />
         <LogPanel eyebrow="DOCKER COMPOSE" title="Container Operations" logs={logs.filter(entry => entry.source === 'container').map(entry => entry.line)} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('container')} />
       </div>

@@ -21,11 +21,13 @@ export function parseDependency(raw: string): Dependency {
   let rest = trimmed;
   if (rest.startsWith('(?)')) { kind = 'hidden-optional'; rest = rest.slice(3).trim(); }
   else if (rest.startsWith('?')) { kind = 'optional'; rest = rest.slice(1).trim(); }
-  else if (rest.startsWith('~')) { kind = 'optional'; rest = rest.slice(1).trim(); }
+  else if (rest.startsWith('+')) { kind = 'recommended'; rest = rest.slice(1).trim(); }
+  else if (rest.startsWith('~')) { kind = 'no-order'; rest = rest.slice(1).trim(); }
   else if (rest.startsWith('!')) { kind = 'incompatible'; rest = rest.slice(1).trim(); }
-  const match = rest.match(/^([^\s<>=]+)\s*(?:(>=|<=|=|>|<)\s*([0-9][0-9.]*))?$/);
-  if (!match) throw new Error(`Unsupported dependency declaration: ${raw}`);
-  return { kind, name: match[1], operator: match[2], version: match[3], raw };
+  const match = rest.match(/^(.+?)(?:\s*(>=|<=|=|>|<)\s*([0-9][0-9.]*))?$/);
+  const name = match?.[1]?.trim();
+  if (!match || !name || /[<>=]/.test(name)) throw new Error(`Unsupported dependency declaration: ${raw}`);
+  return { kind, name, operator: match[2], version: match[3], raw };
 }
 
 export function normalizeModName(input: string) {

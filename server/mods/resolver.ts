@@ -3,7 +3,7 @@ import type { ModMetadataProvider } from './portal-client.js';
 import type { Dependency, ModPlan, ModSelection, PortalRelease } from './types.js';
 import { compareVersions, parseDependency, satisfies } from './versions.js';
 
-const BUILT_INS = new Set(['base', 'core', 'elevated-rails', 'quality', 'space-age']);
+const BUILT_INS = new Set(['base', 'core', 'elevated-rails', 'quality', 'recycler', 'space-age']);
 interface Constraint { from: string; operator?: string; version?: string }
 
 export class ModResolutionError extends Error {}
@@ -25,6 +25,11 @@ export class ModResolver {
     return plan;
   }
 
+  async details(name: string) {
+    const mod = await this.load(name);
+    return { name: mod.name, title: mod.title, summary: mod.summary, thumbnail: officialThumbnail(mod.thumbnail) };
+  }
+
   private async search(factorioVersion: string, constraints: Map<string, Constraint[]>, selected: Map<string, ModSelection>, optional: ModPlan['optional'], explicit: Set<string>): Promise<{ selected: Map<string, ModSelection>; optional: ModPlan['optional'] } | null> {
     for (const [name, selection] of selected) if (!(constraints.get(name) ?? []).every(value => satisfies(selection.version, value.operator, value.version))) return null;
     const pending = [...constraints.keys()].find(name => !selected.has(name) && !BUILT_INS.has(name));
@@ -39,7 +44,7 @@ export class ModResolver {
       for (const raw of release.info_json.dependencies ?? []) {
         const dependency = parseDependency(raw);
         if (BUILT_INS.has(dependency.name)) continue;
-        if (dependency.kind === 'required') nextConstraints.set(dependency.name, [...nextConstraints.get(dependency.name) ?? [], { from: pending, operator: dependency.operator, version: dependency.version }]);
+        if (dependency.kind === 'required' || dependency.kind === 'no-order') nextConstraints.set(dependency.name, [...nextConstraints.get(dependency.name) ?? [], { from: pending, operator: dependency.operator, version: dependency.version }]);
         else if (dependency.kind === 'incompatible') {
           const installed = nextSelected.get(dependency.name);
           if (installed && satisfies(installed.version, dependency.operator, dependency.version)) invalid = true;
@@ -61,6 +66,14 @@ export class ModResolver {
     return false;
   }
   private async load(name: string) { const cached = this.cache.get(name); if (cached) return cached; this.log({ modName: name }, 'fetching Mod Portal metadata'); const mod = await this.provider.getMod(name); this.cache.set(name, mod); return mod; }
+}
+
+function officialThumbnail(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value, 'https://mods.factorio.com');
+    return ['mods.factorio.com', 'assets-mod.factorio.com', 'mods-data.factorio.com'].includes(url.hostname) ? url.toString() : null;
+  } catch { return null; }
 }
 
 function cloneConstraints(value: Map<string, Constraint[]>) { return new Map([...value].map(([name, constraints]) => [name, [...constraints]])); }
