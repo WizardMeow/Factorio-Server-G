@@ -42,6 +42,11 @@ describe('ModResolver', () => {
     expect(plan.selections.map(item => item.name)).toEqual(['root']);
     expect(plan.optional[0]).toMatchObject({ from: 'root', dependency: { name: 'helper', kind: 'optional' } });
   });
+
+  test('maps an official relative thumbnail to the asset host', async () => {
+    const provider = fixtureProvider({ root: { ...mod('root', [release('1.0.0')]), thumbnail: '/assets/root.thumb.png' } });
+    expect(await new ModResolver(provider).details('root')).toMatchObject({ thumbnail: 'https://assets-mod.factorio.com/assets/root.thumb.png' });
+  });
 });
 
 function fixtureProvider(mods: Record<string, PortalMod>): ModMetadataProvider { return { async getMod(name) { const value = mods[name]; if (!value) throw new Error(`missing fixture ${name}`); return value; } }; }

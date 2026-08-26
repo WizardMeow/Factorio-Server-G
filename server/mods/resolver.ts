@@ -71,7 +71,7 @@ export class ModResolver {
 function officialThumbnail(value: string | null | undefined) {
   if (!value) return null;
   try {
-    const url = new URL(value, 'https://mods.factorio.com');
+    const url = new URL(value, 'https://assets-mod.factorio.com');
     return ['mods.factorio.com', 'assets-mod.factorio.com', 'mods-data.factorio.com'].includes(url.hostname) ? url.toString() : null;
   } catch { return null; }
 }
