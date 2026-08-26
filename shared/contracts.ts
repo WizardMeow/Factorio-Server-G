@@ -34,6 +34,7 @@ export const saveDownloadParamsSchema = z.object({ kind: saveCollectionSchema, n
 export const modPlanBodySchema = z.object({ input: z.string().min(1), version: z.string().optional(), optional: z.array(z.string()).optional() });
 export const modPlanConfigBodySchema = z.object({ roots: z.array(configuredModSchema), optional: z.array(z.string()).optional() });
 export const modDetailsSchema = z.array(z.object({ name: z.string(), title: z.string(), summary: z.string(), thumbnail: z.string().url().nullable() }));
+export const modUpdatesSchema = z.object({ factorioVersion: z.string(), checkedAt: z.string(), updates: z.array(z.object({ name: z.string(), currentVersion: z.string(), latestVersion: z.string() })) });
 export const modChangePlanBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('update'), name: z.string().min(1), version: z.string().optional() }),
   z.object({ action: z.literal('remove'), name: z.string().min(1) }),
@@ -58,6 +59,7 @@ export type OperationDto = z.infer<typeof operationSchema>;
 export type OverviewDto = z.infer<typeof overviewSchema>;
 export type ModPlanDto = z.infer<typeof modPlanSchema>;
 export type ModDetailsDto = z.infer<typeof modDetailsSchema>;
+export type ModUpdatesDto = z.infer<typeof modUpdatesSchema>;
 export type ConfiguredModDto = z.infer<typeof configuredModSchema>;
 export type InstalledModDto = z.infer<typeof installedModSchema>;
 export type LogEntryDto = z.infer<typeof logEntrySchema>;

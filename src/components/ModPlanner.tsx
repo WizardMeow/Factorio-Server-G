@@ -1,8 +1,8 @@
-import { Box, ClipboardCheck, ExternalLink, Lock, Plus, Power, RefreshCw, Trash2, Unlock } from 'lucide-react';
+import { Box, CircleArrowUp, ClipboardCheck, ExternalLink, Lock, Plus, Power, RefreshCw, Trash2, Unlock } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import type { ConfiguredMod, ModDetails, ModPlan, Overview } from '../api';
-import { modDetailsSchema, modPlanSchema, request } from '../api';
+import type { ConfiguredMod, ModDetails, ModPlan, ModUpdates, Overview } from '../api';
+import { modDetailsSchema, modPlanSchema, modUpdatesSchema, request } from '../api';
 import { PanelHeader } from './PanelHeader';
 
 interface Props { mods: Overview['mods']; busy: boolean; running: boolean; onSaved(): Promise<void> }
@@ -14,8 +14,11 @@ export function ModPlanner({ mods, busy, running, onSaved }: Props) {
   const [draft, setDraft] = useState<ConfiguredMod[]>(() => copyRoots(mods.roots));
   const [details, setDetails] = useState<ModDetails>([]);
   const [plan, setPlan] = useState<ModPlan | null>(null);
+  const [updates, setUpdates] = useState<ModUpdates | null>(null);
   const [selectedOptional, setSelectedOptional] = useState<string[]>([]);
   const [planning, setPlanning] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const changes = useMemo(() => describeChanges(baseline, draft), [baseline, draft]);
   const namesKey = draft.map(mod => mod.name.trim()).filter(Boolean).join(',');
   const disabled = busy || running || planning;
@@ -28,6 +31,7 @@ export function ModPlanner({ mods, busy, running, onSaved }: Props) {
     setBaselineKey(serverKey);
     setDraft(current => rootsKey(current) === serverKey ? next : current);
     setPlan(null);
+    setUpdates(null);
     setSelectedOptional([]);
   }, [baselineKey, mods.roots, serverKey]);
 
@@ -43,6 +47,7 @@ export function ModPlanner({ mods, busy, running, onSaved }: Props) {
   function changeDraft(update: (current: ConfiguredMod[]) => ConfiguredMod[]) {
     setDraft(current => update(current));
     setPlan(null);
+    setUpdates(null);
     setSelectedOptional([]);
   }
 
@@ -56,11 +61,38 @@ export function ModPlanner({ mods, busy, running, onSaved }: Props) {
       setBaselineKey(rootsKey(savedRoots));
       setDraft(copyRoots(savedRoots));
       setPlan(next);
+      setUpdates(null);
       setSelectedOptional(optional);
       await onSaved();
       toast.success('已保存为下次启动的 Mod 配置。');
     } catch (error) { toast.error(String(error)); }
     finally { setPlanning(false); }
+  }
+
+  async function checkUpdates() {
+    setCheckingUpdates(true);
+    try {
+      const next = await request<ModUpdates>('/api/mods/updates', undefined, modUpdatesSchema);
+      setUpdates(next);
+      toast.success(next.updates.length ? `发现 ${next.updates.length} 个可升级 Mod。` : '所有未锁定的 Mod 均已是最新兼容版本。');
+    } catch (error) { toast.error(String(error)); }
+    finally { setCheckingUpdates(false); }
+  }
+
+  async function upgrade() {
+    setUpgrading(true);
+    try {
+      const next = await request<ModPlan>('/api/mods/upgrade', { method: 'POST' }, modPlanSchema);
+      const savedRoots = copyRoots(next.roots);
+      setBaseline(savedRoots);
+      setBaselineKey(rootsKey(savedRoots));
+      setDraft(copyRoots(savedRoots));
+      setPlan(next);
+      setUpdates(null);
+      await onSaved();
+      toast.success('已保存最新兼容 Mod 组合，将在下次启动时下载并应用。');
+    } catch (error) { toast.error(String(error)); }
+    finally { setUpgrading(false); }
   }
 
   const resolved = new Map(mods.resolved.map(mod => [mod.name, mod.version]));
@@ -78,7 +110,8 @@ export function ModPlanner({ mods, busy, running, onSaved }: Props) {
       </div>
       {changes.length > 0 && <div className="mb-3.5 rounded-[7px] border border-[#3a453d] bg-[#101612] px-3 py-2.5 text-[10px]"><b className="block text-[#b9c9bc]">Pending changes ({changes.length})</b><ul className="mt-1.5 mb-0 grid list-disc gap-0.5 pl-4 font-mono text-[#849188]">{changes.map(change => <li key={change}>{change}</li>)}</ul></div>}
       {mods.pending && <p className="mt-[-7px] mb-3.5 rounded-[7px] border border-[#4c3b22] bg-[#22190f] px-[11px] py-[9px] text-[10px] text-[#e5ad72]">当前列表已保存为下次启动配置，将在启动时下载并应用。</p>}
-      <div className="flex flex-wrap items-center gap-2"><button className="primary" disabled={disabled || invalid || changes.length === 0} onClick={() => void resolve()}>{planning ? <RefreshCw className="spinner" size={15} /> : <RefreshCw size={15} />}Resolve & save {changes.length ? `${changes.length} changes` : 'list'}</button>{invalid && <span className="text-[10px] text-[#fb7185]">名称不能为空且不能重复。</span>}</div>
+      <div className="flex flex-wrap items-center gap-2"><button disabled={busy || planning || checkingUpdates || upgrading} onClick={() => void checkUpdates()}>{checkingUpdates ? <RefreshCw className="spinner" size={15} /> : <RefreshCw size={15} />}Check updates</button>{updates && updates.updates.length > 0 && <button className="primary" disabled={disabled || upgrading || changes.length > 0} title={changes.length ? 'Resolve or discard list edits before upgrading' : 'Stage latest compatible versions for next start'} onClick={() => void upgrade()}>{upgrading ? <RefreshCw className="spinner" size={15} /> : <CircleArrowUp size={15} />}Upgrade {updates.updates.length} mods</button>}<button className="primary" disabled={disabled || invalid || changes.length === 0} onClick={() => void resolve()}>{planning ? <RefreshCw className="spinner" size={15} /> : <RefreshCw size={15} />}Resolve & save {changes.length ? `${changes.length} changes` : 'list'}</button>{invalid && <span className="text-[10px] text-[#fb7185]">名称不能为空且不能重复。</span>}</div>
+      {updates && <div className={`mt-3 rounded-[7px] border px-3 py-2.5 text-[10px] ${updates.updates.length ? 'border-[#4c3b22] bg-[#22190f]' : 'border-[#304438] bg-[#101612]'}`}>{updates.updates.length ? <><b className="block text-[#e5ad72]">Updates available ({updates.updates.length})</b><ul className="mt-1.5 mb-0 grid list-disc gap-0.5 pl-4 font-mono text-[#c2ad87]">{updates.updates.map(update => <li key={update.name}>{update.name} {update.currentVersion} → {update.latestVersion}</li>)}</ul><small className="mt-2 block text-[#9b8b70]">Upgrade keeps locked versions unchanged and saves the resolved result for the next start.</small></> : <b className="text-[#9fd2ac]">All unlocked mods are already up to date for Factorio {updates.factorioVersion}.</b>}</div>}
       {running && <p className="mt-3 mb-0 text-[10px] text-[#fbbf24]">Stop Factorio before planning and applying mod changes.</p>}
       {plan && <PlanPreview plan={plan} selectedOptional={selectedOptional} onOptionalChange={next => void resolve(next)} />}
     </div>

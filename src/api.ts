@@ -1,6 +1,6 @@
 import type { z } from 'zod';
-export { logEntrySchema, modDetailsSchema, modPlanSchema, operationSnapshotSchema, overviewSchema, profileQuickImportResultSchema, saveUploadResultSchema, versionOptionsSchema } from '../shared/contracts';
-export type { ConfiguredModDto as ConfiguredMod, InstalledModDto as InstalledMod, LogEntryDto as LogEntry, ModDetailsDto as ModDetails, ModPlanDto as ModPlan, OperationDto as Operation, OverviewDto as Overview, ProfileQuickImportResultDto as ProfileQuickImportResult, SaveEntryDto as SaveEntry, SaveUploadResultDto as SaveUploadResult, VersionOptionsDto as VersionOptions } from '../shared/contracts';
+export { logEntrySchema, modDetailsSchema, modPlanSchema, modUpdatesSchema, operationSnapshotSchema, overviewSchema, profileQuickImportResultSchema, saveUploadResultSchema, versionOptionsSchema } from '../shared/contracts';
+export type { ConfiguredModDto as ConfiguredMod, InstalledModDto as InstalledMod, LogEntryDto as LogEntry, ModDetailsDto as ModDetails, ModPlanDto as ModPlan, ModUpdatesDto as ModUpdates, OperationDto as Operation, OverviewDto as Overview, ProfileQuickImportResultDto as ProfileQuickImportResult, SaveEntryDto as SaveEntry, SaveUploadResultDto as SaveUploadResult, VersionOptionsDto as VersionOptions } from '../shared/contracts';
 
 export function request<T>(path: string, init: RequestInit | undefined, schema: z.ZodType<T>): Promise<T>;
 export function request(path: string, init?: RequestInit): Promise<unknown>;

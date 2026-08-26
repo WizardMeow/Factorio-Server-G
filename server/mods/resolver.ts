@@ -30,6 +30,19 @@ export class ModResolver {
     return { name: mod.name, title: mod.title, summary: mod.summary, thumbnail: officialThumbnail(mod.thumbnail) };
   }
 
+  async updates(factorioVersion: string, roots: Array<{ name: string; version?: string; enabled?: boolean }>, currentVersions: Map<string, string>) {
+    const plan = await this.resolve(factorioVersion, roots);
+    const latest = new Map(plan.selections.filter(selection => selection.explicit).map(selection => [selection.name, selection.version]));
+    return {
+      factorioVersion: plan.factorioVersion,
+      updates: plan.roots.filter(root => root.enabled && !root.version).flatMap(root => {
+        const currentVersion = currentVersions.get(root.name);
+        const latestVersion = latest.get(root.name);
+        return currentVersion && latestVersion && compareVersions(latestVersion, currentVersion) > 0 ? [{ name: root.name, currentVersion, latestVersion }] : [];
+      }),
+    };
+  }
+
   private async search(factorioVersion: string, constraints: Map<string, Constraint[]>, selected: Map<string, ModSelection>, optional: ModPlan['optional'], explicit: Set<string>): Promise<{ selected: Map<string, ModSelection>; optional: ModPlan['optional'] } | null> {
     for (const [name, selection] of selected) if (!(constraints.get(name) ?? []).every(value => satisfies(selection.version, value.operator, value.version))) return null;
     const pending = [...constraints.keys()].find(name => !selected.has(name) && !BUILT_INS.has(name));

@@ -170,6 +170,28 @@ export async function buildApp(options: AppOptions) {
     return reply.send(plan);
   });
 
+  app.get('/api/mods/updates', async request => {
+    const { profile, data } = await activeServices();
+    const [config, lock] = await Promise.all([data.readModConfig(), data.readModLock()]);
+    const result = await resolver.updates(config.factorioVersion, normalizeConfiguredMods(config.mods), new Map(lock.mods.map(mod => [mod.name, mod.version])));
+    request.log.info({ profileId: profile.id, factorioVersion: result.factorioVersion, updateCount: result.updates.length }, 'mod update check completed');
+    return { ...result, checkedAt: new Date().toISOString() };
+  });
+
+  app.post('/api/mods/upgrade', async (request, reply) => {
+    if (operations.snapshot.active) return reply.code(409).send({ error: 'Another operation is active' });
+    if ((await options.adapter.inspect()).running) return reply.code(409).send({ error: 'Factorio must be stopped before upgrading mods' });
+    const { profile, data, installer } = await activeServices();
+    const config = await data.readModConfig();
+    const plan = await operations.runExclusive('upgrade-mods', 'recreating', async () => {
+      const resolved = await resolveConfiguredPlan(resolver, config.factorioVersion, normalizeConfiguredMods(config.mods));
+      await installer.stage(resolved);
+      return resolved;
+    });
+    request.log.info({ profileId: profile.id, planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod upgrades staged for next start');
+    return reply.send(plan);
+  });
+
   app.get('/api/mods/details', async (request, reply) => {
     const raw = (request.query as { names?: unknown }).names;
     if (typeof raw !== 'string') return reply.code(400).send({ error: 'names is required' });

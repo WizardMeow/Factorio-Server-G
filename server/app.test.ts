@@ -93,6 +93,21 @@ describe('core HTTP flows', () => {
     expect(rejected.statusCode).toBe(409);
   });
 
+  test('checks available mod updates and stages them on explicit upgrade', async () => {
+    const { app, root } = await fixture();
+    await writeFile(join(root, 'config/profiles/p1/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
+    await writeFile(join(root, 'config/profiles/p1/mods.lock.json'), JSON.stringify({ mods: [{ name: 'demo', version: '0.9.0', explicit: true, enabled: true }] }));
+
+    const checked = await app.inject({ method: 'GET', url: '/api/mods/updates' });
+    expect(checked.statusCode).toBe(200);
+    expect(checked.json()).toMatchObject({ factorioVersion: '2.0', updates: [{ name: 'demo', currentVersion: '0.9.0', latestVersion: '1.0.0' }] });
+
+    const upgraded = await app.inject({ method: 'POST', url: '/api/mods/upgrade' });
+    expect(upgraded.statusCode).toBe(200);
+    expect(upgraded.json()).toMatchObject({ roots: [{ name: 'demo', enabled: true }], selections: [{ name: 'demo', version: '1.0.0', explicit: true }] });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/mods.lock.json'), 'utf8'))).toMatchObject({ mods: [{ name: 'demo', version: '1.0.0' }] });
+  });
+
   test('backs up the default autosave and resets a non-default next launch after starting', async () => {
     const { app, adapter, root } = await fixture();
     const savesRoot = join(root, 'runtime/profiles/p1/factorio/saves');
