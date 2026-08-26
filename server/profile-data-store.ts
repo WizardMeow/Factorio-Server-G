@@ -19,14 +19,15 @@ export class ProfileDataStore {
       return Object.fromEntries(Object.entries(value).filter(([key]) => !/password|token|credential/i.test(key)));
     } catch { return null; }
   }
-  async readNextLaunch(): Promise<LaunchSave> {
+  async readNextLaunch(): Promise<LaunchSave | null> {
     try {
       const value = await this.readJson('runtime', join('webui', 'launch.json'), partialLaunchSaveSchema);
-      return value.kind && value.name && value.saveName ? launchSaveSchema.parse(value) : defaultLaunch();
-    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultLaunch(); throw error; }
+      return value.kind && value.name && value.saveName ? launchSaveSchema.parse(value) : null;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
   }
   writeFactorioConfig(value: unknown) { return this.writeJson(join(this.configRoot, 'factorio.json'), factorioConfigSchema.parse(value)); }
   writeNextLaunch(value: unknown) { return this.writeJson(join(this.runtimeRoot, 'webui', 'launch.json'), launchSaveSchema.parse(value)); }
+  clearNextLaunch() { return rm(join(this.runtimeRoot, 'webui', 'launch.json'), { force: true }); }
 
   async withFileRollback<T>(paths: string[], work: () => Promise<T>): Promise<T> {
     const snapshots = await Promise.all(paths.map(path => this.snapshot(path)));
@@ -52,5 +53,3 @@ export class ProfileDataStore {
     else { await mkdir(resolve(snapshot.path, '..'), { recursive: true }); await writeFile(snapshot.path, snapshot.content); }
   }
 }
-
-function defaultLaunch(): LaunchSave { return { kind: 'autosaves', name: '_autosave1.zip', saveName: '_autosave1.zip' }; }

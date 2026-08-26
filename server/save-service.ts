@@ -18,6 +18,7 @@ export class SaveService {
   async list() {
     return { main: await this.info(join(this.savesDir, MAIN_SAVE_NAME)), autosaves: await this.entries(this.savesDir, /^_autosave.*\.zip$/), imports: await this.entries(this.importsDir), backups: await this.entries(this.backupsDir) };
   }
+  async latestAutosave() { return (await this.entries(this.savesDir, /^_autosave.*\.zip$/))[0] ?? null; }
   async backup(sourceName = MAIN_SAVE_NAME, prefix = 'manual') {
     this.validateName(sourceName);
     const name = `${prefix}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;

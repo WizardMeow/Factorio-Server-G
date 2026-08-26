@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
 import type { ComposeAdapter, OperationRecord } from './types.js';
 import { OperationConflictError, OperationManager } from './operation-manager.js';
-import { SaveService } from './save-service.js';
+import { MAIN_SAVE_NAME, SaveService } from './save-service.js';
 import { redact } from './redact.js';
 import { classifyContainerLog } from './log-source.js';
 import { ProfileService } from './profile-service.js';
@@ -62,7 +62,7 @@ export async function buildApp(options: AppOptions) {
     const { profile, saves, installer, data } = await activeServices();
     const [modConfig, modLock] = await Promise.all([data.readModConfig(), data.readModLock()]);
     const saveList = await saves.list();
-    const launch = await data.readNextLaunch();
+    const launch = (await data.readNextLaunch()) ?? await defaultLaunch(saves);
     const selectedSave = saveList[launch.kind].find(entry => entry.name === launch.name) ?? null;
     const connectionAddress = await options.adapter.connectionAddress();
     return {
@@ -360,7 +360,7 @@ export async function buildApp(options: AppOptions) {
     const { saves, data } = await activeServices();
     await operations.runExclusive('delete-save', 'recreating', async () => {
       const launch = await data.readNextLaunch();
-      if (launch.kind === parsed.data.kind && launch.name === parsed.data.name) throw new OperationConflictError('Cannot delete the selected startup save');
+      if (launch?.kind === parsed.data.kind && launch.name === parsed.data.name) throw new OperationConflictError('Cannot delete the selected startup save');
       await saves.deleteEntry(parsed.data.kind, parsed.data.name);
     });
     request.log.info({ saveKind: parsed.data.kind, saveName: parsed.data.name }, 'save candidate deleted');
@@ -451,6 +451,11 @@ async function ensureDefaultServerSettings(projectRoot: string, runtimeRoot: str
 
 function normalizeConfiguredMods(mods: Array<{ name: string; version?: string; enabled?: boolean }>): ConfiguredMod[] {
   return mods.map(mod => ({ name: mod.name, version: mod.version, enabled: mod.enabled ?? true }));
+}
+
+async function defaultLaunch(saves: SaveService) {
+  const latest = await saves.latestAutosave();
+  return { kind: 'autosaves' as const, name: latest?.name ?? MAIN_SAVE_NAME, saveName: latest?.name ?? MAIN_SAVE_NAME };
 }
 
 function normalizeDraftRoots(mods: ConfiguredMod[]) {

@@ -49,8 +49,15 @@ export class DockerComposeAdapter implements ComposeAdapter {
       const launch = await readFile(join(profileRuntime, 'webui', 'launch.json'), 'utf8').then(value => partialLaunchSaveSchema.parse(JSON.parse(value))).catch(() => partialLaunchSaveSchema.parse({}));
       const hostRoot = process.env.HOST_PROJECT_ROOT || this.cwd;
       const dataPath = join(hostRoot, 'runtime', 'profiles', profileId, 'factorio');
-      return { ...process.env, FACTORIO_VERSION: config.version || '2.0.77', FACTORIO_SAVE_NAME: (launch.saveName || '_autosave1.zip').replace(/\.zip$/, ''), FACTORIO_DATA_PATH: dataPath };
-    } catch { return { ...process.env, FACTORIO_VERSION: '2.0.77', FACTORIO_SAVE_NAME: '_autosave1', FACTORIO_DATA_PATH: join(process.env.HOST_PROJECT_ROOT || this.cwd, 'runtime', 'profiles', 'p1', 'factorio') }; }
+      const selectedSave = launch.saveName?.replace(/\.zip$/, '');
+      return {
+        ...process.env,
+        FACTORIO_VERSION: config.version || '2.0.77',
+        FACTORIO_LOAD_LATEST_SAVE: selectedSave ? 'false' : 'true',
+        ...(selectedSave ? { FACTORIO_SAVE_NAME: selectedSave } : {}),
+        FACTORIO_DATA_PATH: dataPath,
+      };
+    } catch { return { ...process.env, FACTORIO_VERSION: '2.0.77', FACTORIO_LOAD_LATEST_SAVE: 'true', FACTORIO_DATA_PATH: join(process.env.HOST_PROJECT_ROOT || this.cwd, 'runtime', 'profiles', 'p1', 'factorio') }; }
   }
 
   async inspect(): Promise<ContainerState> {

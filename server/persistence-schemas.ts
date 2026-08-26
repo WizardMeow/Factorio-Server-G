@@ -17,7 +17,7 @@ export const composeProjectSchema = z.object({
 }).passthrough();
 export const operationRecordSchema = z.object({
   id: z.string(), kind: z.string(),
-  stage: z.enum(['stopped', 'pulling', 'recreating', 'starting', 'ready', 'stopping', 'failed', 'backing-up', 'restoring', 'completed']),
+  stage: z.enum(['stopped', 'pulling', 'installing-mods', 'recreating', 'starting', 'ready', 'stopping', 'failed', 'backing-up', 'restoring', 'completed']),
   startedAt: z.string(), updatedAt: z.string(), finishedAt: z.string().optional(),
   result: z.enum(['succeeded', 'failed', 'interrupted']).optional(), error: z.string().optional(),
 });

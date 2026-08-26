@@ -13,6 +13,7 @@ const statusClasses: Record<string, string> = {
   starting: 'bg-[#facc15] shadow-[0_0_0_6px_#65716a14]',
   stopping: 'bg-[#facc15] shadow-[0_0_0_6px_#65716a14]',
   pulling: 'bg-[#facc15] shadow-[0_0_0_6px_#65716a14]',
+  'installing-mods': 'bg-[#facc15] shadow-[0_0_0_6px_#65716a14]',
   recreating: 'bg-[#facc15] shadow-[0_0_0_6px_#65716a14]',
 };
 

@@ -54,7 +54,9 @@ services:
       # leaves Quality and its recycler disabled. Set DLC_SPACE_AGE in .env to
       # override this per deployment.
       DLC_SPACE_AGE: "${DLC_SPACE_AGE:-elevated-rails}"
-      LOAD_LATEST_SAVE: "false"
+      # Let the upstream image start its newest save by default. The WebUI
+      # sets this to false only for a one-off explicitly selected save.
+      LOAD_LATEST_SAVE: "${FACTORIO_LOAD_LATEST_SAVE:-true}"
       SAVE_NAME: "${FACTORIO_SAVE_NAME:-_autosave1}"
       GENERATE_NEW_SAVE: "false"
       UPDATE_MODS_ON_START: "false"

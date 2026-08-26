@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildApp } from './app.js';
@@ -93,6 +93,20 @@ describe('core HTTP flows', () => {
     expect(rejected.statusCode).toBe(409);
   });
 
+  test('uses the newest autosave as the default next launch', async () => {
+    const { app, root } = await fixture();
+    const savesRoot = join(root, 'runtime/profiles/p1/factorio/saves');
+    const older = join(savesRoot, '_autosave1.zip');
+    const latest = join(savesRoot, '_autosave4.zip');
+    await writeFile(older, 'older world');
+    await writeFile(latest, 'latest world');
+    await utimes(older, new Date('2026-01-01'), new Date('2026-01-01'));
+    await utimes(latest, new Date('2026-01-02'), new Date('2026-01-02'));
+
+    const overview = await app.inject({ method: 'GET', url: '/api/overview' });
+    expect(overview.json().saves.nextLaunch).toEqual({ kind: 'autosaves', name: '_autosave4.zip' });
+  });
+
   test('checks available mod updates and stages them on explicit upgrade', async () => {
     const { app, root } = await fixture();
     await writeFile(join(root, 'config/profiles/p1/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'demo', enabled: true }] }));
@@ -108,18 +122,26 @@ describe('core HTTP flows', () => {
     expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/mods.lock.json'), 'utf8'))).toMatchObject({ mods: [{ name: 'demo', version: '1.0.0' }] });
   });
 
-  test('backs up the default autosave and resets a non-default next launch after starting', async () => {
+  test('backs up the latest autosave and clears a one-off next launch after starting', async () => {
     const { app, adapter, root } = await fixture();
     const savesRoot = join(root, 'runtime/profiles/p1/factorio/saves');
     const launchPath = join(root, 'runtime/profiles/p1/webui/launch.json');
-    await writeFile(join(savesRoot, '_autosave1.zip'), 'default world');
-    await writeFile(join(savesRoot, '_autosave2.zip'), 'temporary world');
-    expect((await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave2.zip' } })).statusCode).toBe(200);
+    const older = join(savesRoot, '_autosave1.zip');
+    const latest = join(savesRoot, '_autosave4.zip');
+    await writeFile(older, 'older world');
+    await writeFile(latest, 'latest world');
+    await utimes(older, new Date('2026-01-01'), new Date('2026-01-01'));
+    await utimes(latest, new Date('2026-01-02'), new Date('2026-01-02'));
+    await writeFile(join(root, 'runtime/profiles/p1/imports', 'temporary.zip'), 'temporary world');
+    expect((await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'imports', name: 'temporary.zip' } })).statusCode).toBe(200);
 
     expect((await app.inject({ method: 'POST', url: '/api/server/start' })).statusCode).toBe(202);
     await waitFor(() => adapter.calls.includes('recreate'));
-    await waitFor(async () => JSON.parse(await readFile(launchPath, 'utf8')).name === '_autosave1.zip');
-    expect((await readdir(join(root, 'runtime/profiles/p1/backups'))).some(name => /^before-selected-launch-.+\.zip$/.test(name))).toBe(true);
+    await expect(readFile(launchPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    const backups = await readdir(join(root, 'runtime/profiles/p1/backups'));
+    const backup = backups.find(name => /^before-selected-launch-.+\.zip$/.test(name));
+    expect(backup).toBeDefined();
+    expect(await readFile(join(root, 'runtime/profiles/p1/backups', backup!), 'utf8')).toBe('latest world');
   });
 
   test('downloads autosave, import, and backup candidates', async () => {

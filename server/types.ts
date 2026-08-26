@@ -1,4 +1,4 @@
-export type LifecycleState = 'stopped' | 'pulling' | 'recreating' | 'starting' | 'ready' | 'stopping' | 'failed';
+export type LifecycleState = 'stopped' | 'pulling' | 'installing-mods' | 'recreating' | 'starting' | 'ready' | 'stopping' | 'failed';
 
 export interface ContainerState {
   status: LifecycleState;
