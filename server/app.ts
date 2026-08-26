@@ -159,11 +159,14 @@ export async function buildApp(options: AppOptions) {
     try { roots = normalizeDraftRoots(parsed.data.roots); }
     catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Invalid mod list' }); }
     const optional = (parsed.data.optional ?? []).map(name => ({ name: normalizeModName(name) }));
-    const { profile, data } = await activeServices();
+    const { profile, data, installer } = await activeServices();
     const config = await data.readModConfig();
-    const plan = await operations.runExclusive('plan-mod-config', 'recreating', () => resolveConfiguredPlan(resolver, config.factorioVersion, roots, optional));
-    plans.set(plan.id, { profileId: profile.id, plan });
-    request.log.info({ planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod configuration plan resolved');
+    const plan = await operations.runExclusive('resolve-and-stage-mod-config', 'recreating', async () => {
+      const resolved = await resolveConfiguredPlan(resolver, config.factorioVersion, roots, optional);
+      await installer.stage(resolved);
+      return resolved;
+    });
+    request.log.info({ profileId: profile.id, planId: plan.id, roots: plan.roots.map(item => item.name), resolvedCount: plan.selections.length }, 'mod configuration resolved and staged for next start');
     return reply.send(plan);
   });
 

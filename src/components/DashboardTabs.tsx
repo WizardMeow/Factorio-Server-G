@@ -15,12 +15,13 @@ interface Props {
   logStream: 'connecting' | 'live' | 'retrying';
   logHistoryLoaded: boolean;
   clearLogs(source: LogEntry['source']): void;
+  refresh(): Promise<void>;
   mutate(path: string, body?: unknown, method?: string): Promise<void>;
   uploadSave(file?: File): Promise<void>;
   quickImportProfile(file?: File): Promise<void>;
 }
 
-export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, clearLogs, mutate, uploadSave, quickImportProfile }: Props) {
+export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, clearLogs, refresh, mutate, uploadSave, quickImportProfile }: Props) {
   const busy = Boolean(overview.operations.active);
   const tabClass = 'group min-w-[164px] justify-start border-0 bg-transparent px-[15px] py-2.5 text-[#707a74] data-[state=active]:bg-[#1a1f1c] data-[state=active]:text-[#e1e6e3] data-[state=active]:shadow-[inset_0_0_0_1px_#303632] max-[560px]:min-w-0 max-[560px]:flex-1 max-[560px]:px-[9px]';
   const tabLabelClass = 'grid gap-0.5 text-left text-xs';
@@ -38,7 +39,7 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
       <div className="grid gap-4">
         <ProfileSwitcher profiles={overview.profiles} disabled={busy || overview.server.running} onAction={mutate} onQuickImport={quickImportProfile} />
         <VersionCard current={overview.config.version} channel={overview.config.channel} busy={busy} running={overview.server.running} onApply={(version, channel) => mutate('/api/config/version', { version, channel }, 'PUT')} />
-        <ModPlanner mods={overview.mods} busy={busy} running={overview.server.running} onApply={planId => mutate('/api/mods/apply', { planId })} />
+        <ModPlanner mods={overview.mods} busy={busy} running={overview.server.running} onSaved={refresh} />
       </div>
     </Tabs.Content>
 

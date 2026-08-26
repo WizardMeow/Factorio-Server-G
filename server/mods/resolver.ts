@@ -20,7 +20,7 @@ export class ModResolver {
     for (const root of roots) constraints.set(root.name, [{ from: 'root', operator: root.version ? '=' : undefined, version: root.version }]);
     const result = await this.search(normalizedFactorio, constraints, new Map(), [], new Set(roots.map(root => root.name)));
     if (!result) throw new ModResolutionError('No compatible dependency graph could be resolved');
-    const plan = { id: randomUUID(), factorioVersion: normalizedFactorio, roots: roots.map(root => ({ ...root, enabled: root.enabled ?? true })), selections: [...result.selected.values()].sort((a, b) => a.name.localeCompare(b.name)), optional: result.optional, createdAt: new Date().toISOString() };
+    const plan = { id: randomUUID(), factorioVersion: normalizedFactorio, roots: roots.map(root => ({ ...root, name: result.selected.get(root.name)?.name ?? root.name, enabled: root.enabled ?? true })), selections: [...result.selected.values()].sort((a, b) => a.name.localeCompare(b.name)), optional: result.optional, createdAt: new Date().toISOString() };
     this.log({ planId: plan.id, selectionCount: plan.selections.length, optionalCount: plan.optional.length }, 'mod dependency resolution completed');
     return plan;
   }
@@ -37,7 +37,7 @@ export class ModResolver {
     const mod = await this.load(pending);
     const candidates = mod.releases.filter(release => release.info_json.factorio_version === factorioVersion && (constraints.get(pending) ?? []).every(value => satisfies(release.version, value.operator, value.version))).sort((a, b) => compareVersions(b.version, a.version));
     for (const release of candidates) {
-      const nextSelected = new Map(selected).set(pending, { name: pending, version: release.version, explicit: explicit.has(pending), release });
+      const nextSelected = new Map(selected).set(pending, { name: mod.name, version: release.version, explicit: explicit.has(pending), release });
       const nextConstraints = cloneConstraints(constraints);
       const nextOptional = [...optional];
       let invalid = false;

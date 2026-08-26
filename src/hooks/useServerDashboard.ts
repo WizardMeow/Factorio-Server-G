@@ -58,5 +58,5 @@ export function useServerDashboard() {
     } catch (error) { toast.error(String(error)); }
   }
 
-  return { overview, loaded, logs, logStream, logHistoryLoaded, clearLogs: (source: LogEntry['source']) => setLogs(values => values.filter(value => value.source !== source)), mutate, uploadSave, quickImportProfile };
+  return { overview, loaded, logs, logStream, logHistoryLoaded, clearLogs: (source: LogEntry['source']) => setLogs(values => values.filter(value => value.source !== source)), refresh, mutate, uploadSave, quickImportProfile };
 }

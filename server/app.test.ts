@@ -64,7 +64,7 @@ describe('core HTTP flows', () => {
     expect(remove.json()).toMatchObject({ roots: [], selections: [] });
   });
 
-  test('plans an accumulated editable mod list and exposes Mod Portal details', async () => {
+  test('resolves and saves an accumulated editable mod list for the next start', async () => {
     const { app, root } = await fixture();
     await writeFile(join(root, 'config/profiles/p1/mods.json'), JSON.stringify({ factorioVersion: '2.0', mods: [{ name: 'NanoBot3', version: '1.0.0', enabled: true }] }));
 
@@ -73,6 +73,9 @@ describe('core HTTP flows', () => {
     } });
     expect(plan.statusCode).toBe(200);
     expect(plan.json()).toMatchObject({ roots: [{ name: 'AutoGhostBuilder', enabled: true }], selections: [{ name: 'AutoGhostBuilder', explicit: true }] });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/mods.json'), 'utf8'))).toMatchObject({ mods: [{ name: 'AutoGhostBuilder', enabled: true }] });
+    expect(JSON.parse(await readFile(join(root, 'config/profiles/p1/mods.pending.json'), 'utf8'))).toMatchObject({ roots: [{ name: 'AutoGhostBuilder', enabled: true }] });
+    expect((await app.inject({ method: 'GET', url: '/api/overview' })).json().mods).toMatchObject({ roots: [{ name: 'AutoGhostBuilder', enabled: true }], pending: true });
 
     const details = await app.inject({ method: 'GET', url: '/api/mods/details?names=AutoGhostBuilder' });
     expect(details.statusCode).toBe(200);

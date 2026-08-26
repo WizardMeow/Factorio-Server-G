@@ -5,9 +5,9 @@ import type { ConfiguredMod, ModDetails, ModPlan, Overview } from '../api';
 import { modDetailsSchema, modPlanSchema, request } from '../api';
 import { PanelHeader } from './PanelHeader';
 
-interface Props { mods: Overview['mods']; busy: boolean; running: boolean; onApply(planId: string): void }
+interface Props { mods: Overview['mods']; busy: boolean; running: boolean; onSaved(): Promise<void> }
 
-export function ModPlanner({ mods, busy, running, onApply }: Props) {
+export function ModPlanner({ mods, busy, running, onSaved }: Props) {
   const serverKey = rootsKey(mods.roots);
   const [baseline, setBaseline] = useState<ConfiguredMod[]>(() => copyRoots(mods.roots));
   const [baselineKey, setBaselineKey] = useState(serverKey);
@@ -51,8 +51,14 @@ export function ModPlanner({ mods, busy, running, onApply }: Props) {
     setPlanning(true);
     try {
       const next = await request<ModPlan>('/api/mods/plan-config', { method: 'POST', body: JSON.stringify({ roots: draft, optional }) }, modPlanSchema);
+      const savedRoots = copyRoots(next.roots);
+      setBaseline(savedRoots);
+      setBaselineKey(rootsKey(savedRoots));
+      setDraft(copyRoots(savedRoots));
       setPlan(next);
       setSelectedOptional(optional);
+      await onSaved();
+      toast.success('已保存为下次启动的 Mod 配置。');
     } catch (error) { toast.error(String(error)); }
     finally { setPlanning(false); }
   }
@@ -71,16 +77,17 @@ export function ModPlanner({ mods, busy, running, onApply }: Props) {
         {mods.resolved.some(mod => !mod.explicit) && <div className="grid gap-1 bg-[#0d100f] px-[18px] pt-[11px] pb-3.5"><b className="text-[9px] tracking-[.1em] text-[#8b958f] uppercase">Resolved dependencies</b><span className="font-mono text-[9px] leading-[1.6] text-[#626c66]">{mods.resolved.filter(mod => !mod.explicit).map(mod => `${mod.name}@${mod.version}`).join(' · ')}</span></div>}
       </div>
       {changes.length > 0 && <div className="mb-3.5 rounded-[7px] border border-[#3a453d] bg-[#101612] px-3 py-2.5 text-[10px]"><b className="block text-[#b9c9bc]">Pending changes ({changes.length})</b><ul className="mt-1.5 mb-0 grid list-disc gap-0.5 pl-4 font-mono text-[#849188]">{changes.map(change => <li key={change}>{change}</li>)}</ul></div>}
-      {mods.pending && <p className="mt-[-7px] mb-3.5 rounded-[7px] border border-[#4c3b22] bg-[#22190f] px-[11px] py-[9px] text-[10px] text-[#e5ad72]">Mod 目标配置已锁定，将在下次启动时下载并应用。</p>}
-      <div className="flex flex-wrap items-center gap-2"><button className="primary" disabled={disabled || invalid || changes.length === 0} onClick={() => void resolve()}>{planning ? <RefreshCw className="spinner" size={15} /> : <RefreshCw size={15} />}Resolve {changes.length ? `${changes.length} changes` : 'list'}</button>{invalid && <span className="text-[10px] text-[#fb7185]">名称不能为空且不能重复。</span>}</div>
+      {mods.pending && <p className="mt-[-7px] mb-3.5 rounded-[7px] border border-[#4c3b22] bg-[#22190f] px-[11px] py-[9px] text-[10px] text-[#e5ad72]">当前列表已保存为下次启动配置，将在启动时下载并应用。</p>}
+      <div className="flex flex-wrap items-center gap-2"><button className="primary" disabled={disabled || invalid || changes.length === 0} onClick={() => void resolve()}>{planning ? <RefreshCw className="spinner" size={15} /> : <RefreshCw size={15} />}Resolve & save {changes.length ? `${changes.length} changes` : 'list'}</button>{invalid && <span className="text-[10px] text-[#fb7185]">名称不能为空且不能重复。</span>}</div>
       {running && <p className="mt-3 mb-0 text-[10px] text-[#fbbf24]">Stop Factorio before planning and applying mod changes.</p>}
-      {plan && <PlanPreview plan={plan} changes={changes} busy={busy} running={running} selectedOptional={selectedOptional} onApply={onApply} onOptionalChange={next => void resolve(next)} />}
+      {plan && <PlanPreview plan={plan} selectedOptional={selectedOptional} onOptionalChange={next => void resolve(next)} />}
     </div>
   </section>;
 }
 
 function ModRow({ mod, detail, resolvedVersion, disabled, onChange, onDelete }: { mod: ConfiguredMod; detail?: ModDetails[number]; resolvedVersion?: string; disabled: boolean; onChange(value: ConfiguredMod): void; onDelete(): void }) {
   const initials = mod.name.trim().slice(0, 2).toUpperCase() || '??';
+  const displayedVersion = mod.version ?? resolvedVersion ?? '';
   const portal = mod.name.trim() ? `https://mods.factorio.com/mod/${encodeURIComponent(mod.name.trim())}` : undefined;
   const lock = () => {
     if (!resolvedVersion) return toast.error('请先解析该 Mod，再锁定一个具体版本。');
@@ -88,16 +95,16 @@ function ModRow({ mod, detail, resolvedVersion, disabled, onChange, onDelete }: 
   };
   return <div className={`grid min-h-[70px] grid-cols-[minmax(220px,1fr)_150px_auto_auto_auto] items-center gap-[7px] border-b border-[#1e2320] py-2 pr-3 pl-[18px] max-[850px]:grid-cols-[1fr_auto_auto_auto] ${mod.enabled ? '' : 'opacity-55'}`}>
     <div className="flex min-w-0 items-center gap-[9px]"><div className="relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border border-[#3d4941] bg-[#172019] font-mono text-[10px] text-[var(--green)]"><span>{initials}</span>{detail?.thumbnail && <img className="absolute inset-0 size-full object-cover" src={detail.thumbnail} alt="" onError={event => { event.currentTarget.style.display = 'none'; }} />}</div><span className="grid min-w-0 gap-0.5"><input className="min-w-0 border-0 bg-transparent p-0 font-mono text-[11px] font-bold text-[#d8dedb] outline-none" aria-label="Mod name or official URL" value={mod.name} onChange={event => onChange({ ...mod, name: event.target.value })} placeholder="Mod name or official URL" disabled={disabled} /><small className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[9px] text-[#65706a]" title={detail?.summary}>{detail?.summary || (mod.version ? `locked ${mod.version}` : resolvedVersion ? `resolved ${resolvedVersion}` : 'latest compatible')}</small>{portal && <a className="flex w-fit items-center gap-1 text-[9px] text-[var(--green)]" href={portal} target="_blank" rel="noreferrer"><ExternalLink size={11} />Mod Portal</a>}</span></div>
-    <input className="h-[34px] min-w-0 rounded-md border border-[#303633] bg-[#0b0e0d] px-[9px] font-mono text-[10px] text-[#cbd2ce] max-[850px]:col-span-full max-[850px]:col-start-1 max-[850px]:row-start-2" aria-label={`${mod.name || 'new mod'} locked version`} value={mod.version ?? ''} onChange={event => onChange({ ...mod, version: event.target.value || undefined })} placeholder="latest compatible" disabled={disabled} />
+    <input className="h-[34px] min-w-0 rounded-md border border-[#303633] bg-[#0b0e0d] px-[9px] font-mono text-[10px] text-[#cbd2ce] max-[850px]:col-span-full max-[850px]:col-start-1 max-[850px]:row-start-2" aria-label={`${mod.name || 'new mod'} version`} value={displayedVersion} onChange={event => onChange({ ...mod, version: event.target.value || undefined })} placeholder="resolve required" disabled={disabled} />
     <button className="size-[34px] p-0" aria-label={mod.version ? `解锁 ${mod.name}` : `锁定 ${mod.name}`} title={mod.version ? 'Unlock version' : 'Lock resolved version'} disabled={disabled || (!mod.version && !resolvedVersion)} onClick={() => mod.version ? onChange({ ...mod, version: undefined }) : lock()}>{mod.version ? <Unlock size={14} /> : <Lock size={14} />}</button>
     <button className="size-[34px] p-0" aria-label={`${mod.enabled ? '禁用' : '启用'} ${mod.name}`} title={mod.enabled ? 'Disable' : 'Enable'} disabled={disabled} onClick={() => onChange({ ...mod, enabled: !mod.enabled })}>{mod.enabled ? <span className="text-[10px]">ON</span> : <span className="text-[10px]">OFF</span>}</button>
     <button className="size-[34px] p-0 text-[#fb7185]" aria-label={`删除 ${mod.name}`} title="Remove" disabled={disabled} onClick={onDelete}><Trash2 size={14} /></button>
   </div>;
 }
 
-function PlanPreview({ plan, changes, busy, running, selectedOptional, onApply, onOptionalChange }: { plan: ModPlan; changes: string[]; busy: boolean; running: boolean; selectedOptional: string[]; onApply(id: string): void; onOptionalChange(value: string[]): void }) {
+function PlanPreview({ plan, selectedOptional, onOptionalChange }: { plan: ModPlan; selectedOptional: string[]; onOptionalChange(value: string[]): void }) {
   return <div className="mt-[17px] overflow-hidden rounded-[9px] border border-[#2d332f] bg-[#0b0e0d]">
-    <div className="flex min-h-[68px] items-center justify-between border-b border-[#252a27] px-3.5 py-3"><div><b className="block text-[13px]">Resolved change set</b><span className="font-mono text-[9px] text-[#64706a]">{changes.length} changes · {plan.roots.filter(root => root.enabled).length} roots · {plan.selections.length} archives · Factorio {plan.factorioVersion}</span></div><button className="primary" disabled={busy || running} onClick={() => onApply(plan.id)}><ClipboardCheck size={15} />Stage for next start</button></div>
+    <div className="flex min-h-[68px] items-center justify-between border-b border-[#252a27] px-3.5 py-3"><div><b className="block text-[13px]">Resolved configuration</b><span className="font-mono text-[9px] text-[#64706a]">{plan.roots.filter(root => root.enabled).length} roots · {plan.selections.length} archives · Factorio {plan.factorioVersion}</span></div><span className="flex items-center gap-1 text-[10px] text-[var(--green)]"><ClipboardCheck size={15} />Saved for next start</span></div>
     <div className="grid grid-cols-3 p-2 max-[850px]:grid-cols-2 max-[560px]:grid-cols-1">{plan.selections.map(item => <div className="grid grid-cols-[1fr_auto] gap-x-2.5 gap-y-[3px] border-b border-[#1c211f] p-[9px]" key={item.name}><span className={`font-mono text-[10px] ${item.explicit ? 'text-[var(--orange)]' : ''}`}>{item.name}</span><b className="font-mono text-[10px]">{item.version}</b><em className="col-span-full font-mono text-[8px] text-[#535c57] uppercase">{item.explicit ? 'root' : 'dependency'}</em></div>)}</div>
     {plan.selections.length === 0 && <div className="p-[18px] font-mono text-[10px] text-[#626c66]">This change will leave no external mods installed.</div>}
     {plan.optional.length > 0 && <div className="border-t border-[#252a27] px-4 pt-3 pb-[15px]"><h4 className="mt-0 mb-[9px] text-[10px] text-[#858f89]">Optional dependencies</h4>{plan.optional.map(item => <label className="flex items-center gap-[7px] text-[11px]" key={`${item.from}-${item.dependency.raw}`}><input type="checkbox" checked={selectedOptional.includes(item.dependency.name)} onChange={event => onOptionalChange(event.target.checked ? [...selectedOptional, item.dependency.name] : selectedOptional.filter(name => name !== item.dependency.name))} /><span>{item.dependency.name}</span><small className="text-[#59625d]">requested by {item.from} · select explicitly</small></label>)}</div>}
