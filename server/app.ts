@@ -35,7 +35,7 @@ function formatStartupOperation(record: OperationRecord): LogEntryDto {
   const stage = stageLabels[record.stage] ?? record.stage;
   const result = record.result ? ` (${record.result})` : '';
   const error = record.error ? `: ${redact(record.error)}` : '';
-  return { source: 'startup', level: record.result === 'failed' ? 'error' : record.result === 'interrupted' ? 'warning' : record.stage === 'ready' || record.result === 'succeeded' ? 'success' : 'info', line: `[${record.kind}] ${stage}${result}${error}` };
+  return { source: 'startup', level: record.result === 'failed' ? 'error' : record.result === 'interrupted' ? 'warning' : record.stage === 'ready' || record.result === 'succeeded' ? 'success' : 'info', line: `[${record.kind}] ${stage}${result}${error}`, timestamp: record.finishedAt ?? record.updatedAt ?? record.startedAt };
 }
 
 function formatInstallerProgress(fields: Record<string, unknown>, message: string): LogEntryDto {
@@ -44,14 +44,15 @@ function formatInstallerProgress(fields: Record<string, unknown>, message: strin
   const modIndex = typeof fields.modIndex === 'number' ? fields.modIndex : undefined;
   const modTotal = typeof fields.modTotal === 'number' ? fields.modTotal : typeof fields.archiveCount === 'number' ? fields.archiveCount : undefined;
   const mod = modName ? `${modName}${modVersion ? `@${modVersion}` : ''}` : undefined;
-  if (message === 'downloading mod archive') return { source: 'startup', level: 'info', line: `Downloading Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
-  if (message === 'mod archive verified') return { source: 'startup', level: 'success', line: `Verified Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
-  if (message === 'seeded mod cache from active generation') return { source: 'startup', level: 'success', line: `Cached active Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
-  if (message === 'reusing cached mod archive') return { source: 'startup', level: 'success', line: `Reusing cached Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}` };
-  if (message === 'mod generation staging started') return { source: 'startup', level: 'info', line: `Preparing Mod generation (${modTotal ?? 0} archives)` };
-  if (message === 'mod generation activated') return { source: 'startup', level: 'success', line: 'Mod generation activated' };
-  if (message === 'mod generation staging failed') return { source: 'startup', level: 'error', line: `Mod installation failed${typeof fields.error === 'string' ? `: ${fields.error}` : ''}` };
-  return { source: 'startup', level: 'info', line: message };
+  const entry = (level: LogEntryDto['level'], line: string): LogEntryDto => ({ source: 'startup', level, line, timestamp: new Date().toISOString() });
+  if (message === 'downloading mod archive') return entry('info', `Downloading Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}`);
+  if (message === 'mod archive verified') return entry('success', `Verified Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}`);
+  if (message === 'seeded mod cache from active generation') return entry('success', `Cached active Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}`);
+  if (message === 'reusing cached mod archive') return entry('success', `Reusing cached Mod ${modIndex ?? '?'}/${modTotal ?? '?'}: ${mod ?? 'unknown'}`);
+  if (message === 'mod generation staging started') return entry('info', `Preparing Mod generation (${modTotal ?? 0} archives)`);
+  if (message === 'mod generation activated') return entry('success', 'Mod generation activated');
+  if (message === 'mod generation staging failed') return entry('error', `Mod installation failed${typeof fields.error === 'string' ? `: ${fields.error}` : ''}`);
+  return entry('info', message);
 }
 
 export async function buildApp(options: AppOptions) {

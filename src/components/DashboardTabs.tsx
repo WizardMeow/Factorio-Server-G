@@ -56,10 +56,12 @@ export function DashboardTabs({ overview, logs, logStream, logHistoryLoaded, cle
     </Tabs.Content>
 
     <Tabs.Content className="outline-none" value="logs">
-      <div className="mt-4 grid grid-cols-3 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
-        <LogPanel eyebrow="LIFECYCLE" title="Startup Process" logs={logs.filter(entry => entry.source === 'startup')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('startup')} />
-        <LogPanel eyebrow="FACTORIO OUTPUT" title="Game Logs" logs={logs.filter(entry => entry.source === 'game')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('game')} />
-        <LogPanel eyebrow="DOCKER COMPOSE" title="Container Operations" logs={logs.filter(entry => entry.source === 'container')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('container')} />
+      <div className="mt-4 grid gap-4">
+        <LogPanel eyebrow="LIFECYCLE · NEXT START" title="Startup Progress" logs={logs.filter(entry => entry.source === 'startup')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('startup')} />
+        <div className="grid grid-cols-2 gap-4 max-[850px]:grid-cols-1">
+          <LogPanel compact eyebrow="FACTORIO OUTPUT" title="Game Logs" logs={logs.filter(entry => entry.source === 'game')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('game')} />
+          <LogPanel compact eyebrow="DOCKER COMPOSE" title="Container Operations" logs={logs.filter(entry => entry.source === 'container')} stream={logStream} historyLoaded={logHistoryLoaded} onClear={() => clearLogs('container')} />
+        </div>
       </div>
     </Tabs.Content>
   </Tabs.Root>;
