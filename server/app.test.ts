@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from '@rstest/core';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildApp } from './app.js';
@@ -93,6 +93,20 @@ describe('core HTTP flows', () => {
     expect(rejected.statusCode).toBe(409);
   });
 
+  test('backs up the default autosave and resets a non-default next launch after starting', async () => {
+    const { app, adapter, root } = await fixture();
+    const savesRoot = join(root, 'runtime/profiles/p1/factorio/saves');
+    const launchPath = join(root, 'runtime/profiles/p1/webui/launch.json');
+    await writeFile(join(savesRoot, '_autosave1.zip'), 'default world');
+    await writeFile(join(savesRoot, '_autosave2.zip'), 'temporary world');
+    expect((await app.inject({ method: 'POST', url: '/api/saves/next-launch', payload: { kind: 'autosaves', name: '_autosave2.zip' } })).statusCode).toBe(200);
+
+    expect((await app.inject({ method: 'POST', url: '/api/server/start' })).statusCode).toBe(202);
+    await waitFor(() => adapter.calls.includes('recreate'));
+    await waitFor(async () => JSON.parse(await readFile(launchPath, 'utf8')).name === '_autosave1.zip');
+    expect((await readdir(join(root, 'runtime/profiles/p1/backups'))).some(name => /^before-selected-launch-.+\.zip$/.test(name))).toBe(true);
+  });
+
   test('downloads autosave, import, and backup candidates', async () => {
     const { app, root } = await fixture();
     await writeFile(join(root, 'runtime/profiles/p1/factorio/saves/_autosave2.zip'), 'autosave');
@@ -163,7 +177,7 @@ async function fixture() {
   apps.push(app);
   return { app, adapter, root };
 }
-async function waitFor(predicate: () => boolean) { for (let i = 0; i < 50; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('timeout'); }
+async function waitFor(predicate: () => boolean | Promise<boolean>) { for (let i = 0; i < 50; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('timeout'); }
 
 async function uploadSave(app: Awaited<ReturnType<typeof buildApp>>, url: string, filename: string, mods?: string[]) {
   const archive = Buffer.from(zipSync({ 'imported/level-init.dat': levelInitFixture(mods) }));

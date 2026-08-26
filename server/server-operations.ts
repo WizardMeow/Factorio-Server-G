@@ -1,9 +1,10 @@
 import type { ModInstaller } from './mods/installer.js';
-import type { SaveService } from './save-service.js';
+import { MAIN_SAVE_NAME, type SaveService } from './save-service.js';
+import type { ProfileDataStore } from './profile-data-store.js';
 import type { ComposeAdapter } from './types.js';
 import type { OperationManager } from './operation-manager.js';
 
-interface ActiveRuntime { installer: ModInstaller; saves: SaveService }
+interface ActiveRuntime { installer: ModInstaller; saves: SaveService; data: ProfileDataStore }
 type SaveCollection = 'autosaves' | 'imports' | 'backups';
 
 export class ServerOperations {
@@ -19,12 +20,16 @@ export class ServerOperations {
       if (action === 'stop') await this.adapter.stop();
       if (action !== 'stop') {
         if (action === 'restart' && (await this.adapter.inspect()).running) { await setStage('stopping'); await this.adapter.stop(); }
-        const { installer } = await this.runtime();
+        const { installer, saves, data } = await this.runtime();
+        const launch = await data.readNextLaunch();
+        const usesTemporarySave = launch.kind !== 'autosaves' || launch.name !== MAIN_SAVE_NAME || launch.saveName !== MAIN_SAVE_NAME;
         await setStage('pulling');
         await this.adapter.pull();
         await installer.applyPending();
+        if (usesTemporarySave && (await saves.list()).main) await saves.backup(MAIN_SAVE_NAME, 'before-selected-launch');
         await setStage('recreating');
         await this.adapter.recreate();
+        if (usesTemporarySave) await data.writeNextLaunch({ kind: 'autosaves', name: MAIN_SAVE_NAME, saveName: MAIN_SAVE_NAME });
         await setStage('starting');
         await this.waitUntilReady(setStage);
       }
